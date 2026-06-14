@@ -1,0 +1,101 @@
+{
+  "date": "2026-06-14T17:55:08Z",
+  "commit": "b0c9cda",
+  "label": "brute-force",
+  "transport": "http",
+  "cores": 8,
+  "sweep": [
+    {
+      "label": "brute-force",
+      "transport": "http",
+      "concurrency": 1,
+      "requests": 200,
+      "errors": 0,
+      "qps": 20.3,
+      "client_latency_ms": {
+        "mean": 49.268,
+        "p50": 49.206,
+        "p95": 49.891,
+        "p99": 51.654,
+        "max": 52.316
+      },
+      "server_compute_ms": {
+        "p50": 49.0,
+        "p99": 51.338
+      },
+      "interface_overhead_ms": {
+        "mean": 0.2,
+        "p50": 0.193
+      }
+    },
+    {
+      "label": "brute-force",
+      "transport": "http",
+      "concurrency": 8,
+      "requests": 1000,
+      "errors": 0,
+      "qps": 99.6,
+      "client_latency_ms": {
+        "mean": 80.146,
+        "p50": 77.287,
+        "p95": 108.719,
+        "p99": 145.296,
+        "max": 190.475
+      },
+      "server_compute_ms": {
+        "p50": 76.278,
+        "p99": 141.396
+      },
+      "interface_overhead_ms": {
+        "mean": 0.986,
+        "p50": 0.335
+      }
+    },
+    {
+      "label": "brute-force",
+      "transport": "http",
+      "concurrency": 16,
+      "requests": 1000,
+      "errors": 0,
+      "qps": 100.5,
+      "client_latency_ms": {
+        "mean": 158.146,
+        "p50": 156.741,
+        "p95": 192.516,
+        "p99": 215.624,
+        "max": 294.833
+      },
+      "server_compute_ms": {
+        "p50": 76.17,
+        "p99": 130.181
+      },
+      "interface_overhead_ms": {
+        "mean": 79.337,
+        "p50": 78.754
+      }
+    },
+    {
+      "label": "brute-force",
+      "transport": "http",
+      "concurrency": 32,
+      "requests": 1000,
+      "errors": 0,
+      "qps": 102.7,
+      "client_latency_ms": {
+        "mean": 307.309,
+        "p50": 310.076,
+        "p95": 339.109,
+        "p99": 354.72,
+        "max": 396.025
+      },
+      "server_compute_ms": {
+        "p50": 75.459,
+        "p99": 116.524
+      },
+      "interface_overhead_ms": {
+        "mean": 230.229,
+        "p50": 233.689
+      }
+    }
+  ]
+}

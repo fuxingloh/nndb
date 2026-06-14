@@ -16,11 +16,23 @@ bash scripts/download-sift.sh                    # fetch SIFT1M into data/sift/ 
 cargo build --release                            # release build is mandatory for any real numbers
 cargo test --release                             # run unit tests
 cargo test --release returns_k_nearest_ascending # run a single test by name
-cargo run --release -- --queries 1000 --k 10     # benchmark on a subset (fast iteration)
+cargo run --release -- --queries 1000 --k 10     # in-process benchmark (the vsearch bin)
 cargo run --release -- --queries 0               # benchmark on all 10k queries
+
+# serving path (two extra bins; see Serving below)
+cargo run --release --bin server                 # start the HTTP search server
+cargo run --release --bin loadtest -- --concurrency 8 --requests 1000
 ```
 
-The dataset (`database/data/`) is gitignored — `download-sift.sh` must be run before any benchmark.
+The dataset (`database/data/`) is gitignored — `download-sift.sh` must be run before anything.
+
+## History / measurement
+
+Each improvement is recorded as a numbered pair in `history/`: `NNN-what-we-did.md` (narrative + conclusions) and `NNN-what-we-did.json` (perf data). Two generators, both stamp date + git commit:
+- `history/measure.sh <out.json> <label>` — in-process algorithm numbers (recall, QPS, latency, memory).
+- `history/measure-serving.sh <out.json> <label>` — starts the server and runs a concurrency sweep for user-facing latency.
+
+When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend.
 
 ## Architecture
 
@@ -30,6 +42,10 @@ The benchmark mirrors the ANN-Benchmarks contract: a `base` vector set, a `query
 - **`src/search.rs`** — `knn_batch` is the interface every index implements. Exact brute-force today: squared-L2 (sqrt is monotonic, skip it), a bounded max-heap of size k (O(n log k), not a full sort), parallelized across queries with rayon. **New approximate indexes should slot behind this same `knn_batch(base, queries, k) -> Vec<Vec<u32>>` shape** so the existing harness measures them unchanged.
 - **`src/eval.rs`** — `recall_at_k`: mean over queries of |returned ∩ true top-k| / k.
 - **`src/main.rs`** — loads, runs, reports recall@k + QPS + per-query scan cost.
+
+## Serving
+
+`server.rs` holds the vectors in `Arc<AppState>` and serves `POST /search`. The serving model is deliberate: one request = one **single-threaded** search; a `Semaphore(cores)` bounds in-flight searches so excess load queues (modeling a CPU-bound service). Do **not** parallelize a single query with rayon inside the handler — that tanks throughput under concurrency. Throughput ceilings at ~cores/compute-time (~100 QPS here); beyond concurrency = cores, only latency grows (queuing). The interface (HTTP/JSON) adds <0.4ms — it is not the bottleneck; compute is.
 
 ## Things that will trip you up
 
