@@ -1,0 +1,19 @@
+[package]
+name = "vector-search"
+version = "0.1.0"
+edition = "2021"
+description = "In-memory vector search: exact brute-force baseline + ANN-Benchmarks-style eval harness"
+
+[[bin]]
+name = "vsearch"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rayon = "1"
+
+# Brute-force KNN is FLOP-bound; these settings matter a lot for the baseline numbers.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

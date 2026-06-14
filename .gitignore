@@ -1,0 +1,15 @@
+# Rust
+/database/target/
+**/*.rs.bk
+
+# Datasets (large; fetched via database/scripts/download-sift.sh)
+/database/data/
+
+# Web
+/web/node_modules/
+/web/.next/
+/web/dist/
+
+# Misc
+.DS_Store
+.idea/
