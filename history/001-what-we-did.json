@@ -1,0 +1,24 @@
+{
+  "date": "2026-06-14T17:47:08Z",
+  "commit": "f6cbb59",
+  "label": "brute-force",
+  "dataset": "data/sift",
+  "n_base": 1000000,
+  "dim": 128,
+  "k": 10,
+  "recall_at_k": 0.9994,
+  "qps": 97.9,
+  "qps_queries": 1000,
+  "threads": 8,
+  "latency_ms": {
+    "mean": 48.645,
+    "p50": 48.337,
+    "p95": 50.402,
+    "p99": 51.692,
+    "samples": 200
+  },
+  "memory_bytes": {
+    "index": 512000000,
+    "peak_rss": 1044807680
+  }
+}
