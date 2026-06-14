@@ -32,6 +32,17 @@ pub fn recall_at_k(found: &[Vec<u32>], truth: &IntVectors, k: usize) -> f64 {
     total / found.len() as f64
 }
 
+/// Nearest-rank percentile `p` (0.0..=100.0) over an ascending-sorted slice.
+/// Used for latency distributions (p50/p95/p99), which — unlike QPS — capture
+/// the tail behavior of individual queries.
+pub fn percentile(sorted: &[f64], p: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let rank = ((p / 100.0) * sorted.len() as f64).ceil().max(1.0) as usize;
+    sorted[(rank - 1).min(sorted.len() - 1)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

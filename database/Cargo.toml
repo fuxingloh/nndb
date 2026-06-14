@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rayon = "1"
+libc = "0.2"
 
 # Brute-force KNN is FLOP-bound; these settings matter a lot for the baseline numbers.
 [profile.release]
