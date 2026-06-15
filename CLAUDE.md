@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there. The arc is exact baseline → approximate indexes (HNSW/IVF/PQ), measured the ANN-Benchmarks way (recall-vs-QPS). `database/` is the Rust engine; `web/` will host the eval writeup (not built yet).
+A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there, measured the ANN-Benchmarks way (recall/QPS/latency). `database/` is the Rust engine; `web/` will host the eval writeup (not built yet).
+
+**Scope (important):** this engine models the efficient *exact* search **inside a single IVF cell/shard** — the coarse quantizer that routes a query to a cell lives at a layer above us. So the goal is making the within-cell full scan as fast as possible (SIMD, memory layout, cache). Approximate-index layers (IVF router, HNSW) and quantization are intentionally **out of scope for this component** — open questions about them are parked under `questions/` (`IVF.md`, `HNSW.md`, `quantization.md`), not built here.
 
 ## Commands
 
