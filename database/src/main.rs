@@ -34,6 +34,10 @@ struct Args {
     #[arg(long, default_value_t = 200)]
     latency_queries: usize,
 
+    /// Query tile size: reuse each base vector across this many queries (1 = per-query)
+    #[arg(long, default_value_t = 1)]
+    batch: usize,
+
     /// Name of the index/approach being measured (recorded with results)
     #[arg(long, default_value = "brute-force")]
     label: String,
@@ -87,7 +91,11 @@ fn main() -> std::io::Result<()> {
 
     // --- Throughput pass: saturate all cores with a batch of searches -------
     let t = Instant::now();
-    let found = search::knn_batch(&base, &qps_set, args.k);
+    let found = if args.batch > 1 {
+        search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
+    } else {
+        search::knn_batch(&base, &qps_set, args.k)
+    };
     let qps_secs = t.elapsed().as_secs_f64();
     let qps = n_qps as f64 / qps_secs;
     let recall = eval::recall_at_k(&found, &gt, args.k);
@@ -117,7 +125,7 @@ fn main() -> std::io::Result<()> {
         println!(
             concat!(
                 "{{\"label\":\"{}\",\"dataset\":\"{}\",\"n_base\":{},\"dim\":{},",
-                "\"k\":{},\"recall_at_k\":{:.4},\"qps\":{:.1},\"qps_queries\":{},\"threads\":{},",
+                "\"k\":{},\"batch\":{},\"recall_at_k\":{:.4},\"qps\":{:.1},\"qps_queries\":{},\"threads\":{},",
                 "\"latency_ms\":{{\"mean\":{:.3},\"p50\":{:.3},\"p95\":{:.3},\"p99\":{:.3},\"samples\":{}}},",
                 "\"memory_bytes\":{{\"index\":{},\"peak_rss\":{}}}}}"
             ),
@@ -126,6 +134,7 @@ fn main() -> std::io::Result<()> {
             base.len(),
             base.dim,
             args.k,
+            args.batch,
             recall,
             qps,
             n_qps,
@@ -146,7 +155,7 @@ fn main() -> std::io::Result<()> {
         println!();
         println!("recall@{}:   {:.4}", args.k, recall);
         println!();
-        println!("throughput ({} searches, {} threads):", n_qps, threads);
+        println!("throughput ({} searches, {} threads, batch={}):", n_qps, threads, args.batch);
         println!("  QPS:      {:.1}", qps);
         println!();
         println!("latency ({} single queries, sequential):", n_lat);

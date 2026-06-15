@@ -67,6 +67,54 @@ pub fn knn_batch(base: &Vectors, queries: &Vectors, k: usize) -> Vec<Vec<u32>> {
         .collect()
 }
 
+/// Bandwidth-amortizing KNN. Same exact result as `knn_batch`, but instead of
+/// re-streaming the whole base once per query, it processes queries in tiles of
+/// `tile`: for each base vector loaded, it computes the distance to all queries
+/// in the tile while that vector is hot in cache. The base is streamed once per
+/// tile (Q/tile streams) instead of once per query (Q streams), so the DRAM
+/// traffic — the bandwidth-bound scan's binding constraint — drops by ~`tile`.
+///
+/// The tile must be small enough that its queries stay resident in L1 while the
+/// base streams past them; ~16–32 is the sweet spot (fits L1, and enough to flip
+/// the scan from memory-bound to compute-bound on typical hardware).
+pub fn knn_batch_tiled(base: &Vectors, queries: &Vectors, k: usize, tile: usize) -> Vec<Vec<u32>> {
+    let tile = tile.max(1);
+    let nq = queries.len();
+
+    let starts: Vec<usize> = (0..nq).step_by(tile).collect();
+    let per_tile: Vec<Vec<Vec<u32>>> = starts
+        .into_par_iter()
+        .map(|start| {
+            let end = (start + tile).min(nq);
+            let b = end - start;
+            let mut heaps: Vec<BinaryHeap<(Dist, u32)>> =
+                (0..b).map(|_| BinaryHeap::with_capacity(k + 1)).collect();
+
+            // Stream the base once; reuse each row across the whole query tile.
+            for n in 0..base.len() {
+                let row = base.row(n);
+                for (qi, q) in (start..end).enumerate() {
+                    let d = Dist(l2_sq(row, queries.row(q)));
+                    let h = &mut heaps[qi];
+                    if h.len() < k {
+                        h.push((d, n as u32));
+                    } else if d < h.peek().unwrap().0 {
+                        h.pop();
+                        h.push((d, n as u32));
+                    }
+                }
+            }
+
+            heaps
+                .into_iter()
+                .map(|h| h.into_sorted_vec().into_iter().map(|(_, i)| i).collect())
+                .collect()
+        })
+        .collect();
+
+    per_tile.into_iter().flatten().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +131,21 @@ mod tests {
         let base = vecs(&[&[0.0], &[4.0], &[1.0], &[3.0], &[2.0]]);
         let got = knn(&base, &[0.0], 3);
         assert_eq!(got, vec![0, 2, 4]); // indices of points 0.0, 1.0, 2.0
+    }
+
+    #[test]
+    fn tiled_matches_per_query() {
+        // Batched scan must return identical results to the per-query scan.
+        let base = vecs(&[
+            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
+            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
+        ]);
+        let queries = vecs(&[&[0.0, 0.0], &[5.0, 5.0], &[1.4, 0.1], &[3.1, 2.9], &[0.1, 0.1]]);
+        for &tile in &[1usize, 2, 3, 5, 100] {
+            let plain = knn_batch(&base, &queries, 3);
+            let tiled = knn_batch_tiled(&base, &queries, 3, tile);
+            assert_eq!(plain, tiled, "tile={tile}");
+        }
     }
 
     #[test]
