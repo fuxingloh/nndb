@@ -1,0 +1,147 @@
+{
+  "date": "2026-06-15T16:11:49Z",
+  "commit": "ddec9f4",
+  "label": "brute-force",
+  "cores": 8,
+  "experiment": "query-batching (tiled scan)",
+  "sweep": [
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "recall_at_k": 0.9994,
+      "qps": 94.7,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 49.176,
+        "p50": 49.147,
+        "p95": 49.676,
+        "p99": 49.702,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1044611072
+      }
+    },
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 4,
+      "recall_at_k": 0.9994,
+      "qps": 100.8,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 50.164,
+        "p50": 49.069,
+        "p95": 51.452,
+        "p99": 75.991,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1045348352
+      }
+    },
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 8,
+      "recall_at_k": 0.9994,
+      "qps": 101.1,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 49.15,
+        "p50": 49.092,
+        "p95": 49.458,
+        "p99": 49.591,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1045364736
+      }
+    },
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 16,
+      "recall_at_k": 0.9994,
+      "qps": 99.3,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 49.078,
+        "p50": 49.061,
+        "p95": 49.474,
+        "p99": 49.547,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1045381120
+      }
+    },
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 32,
+      "recall_at_k": 0.9994,
+      "qps": 98.5,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 49.117,
+        "p50": 49.085,
+        "p95": 49.412,
+        "p99": 49.768,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1045381120
+      }
+    },
+    {
+      "label": "brute-force",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 64,
+      "recall_at_k": 0.9994,
+      "qps": 99.4,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 49.246,
+        "p50": 49.089,
+        "p95": 50.059,
+        "p99": 52.635,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1045348352
+      }
+    }
+  ]
+}
