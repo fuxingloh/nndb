@@ -28,11 +28,11 @@ The dataset (`database/data/`) is gitignored — `download-sift.sh` must be run 
 
 ## History / measurement
 
-Each improvement is recorded as a numbered pair in `history/`: `NNN-what-we-did.md` (narrative + conclusions) and `NNN-what-we-did.json` (perf data). Two generators, both stamp date + git commit:
+Each improvement is recorded as a numbered pair in `history/`: `NNN-<descriptive-title>.md` (narrative + conclusions) and `NNN-<descriptive-title>.json` (perf data) — e.g. `001-exact-brute-force-baseline.md`, `002-networked-serving.md`. The title should summarize the index/milestone, not say "what we did". Two generators, both stamp date + git commit:
 - `history/measure.sh <out.json> <label>` — in-process algorithm numbers (recall, QPS, latency, memory).
 - `history/measure-serving.sh <out.json> <label>` — starts the server and runs a concurrency sweep for user-facing latency.
 
-When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend.
+When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale.
 
 ## Architecture
 

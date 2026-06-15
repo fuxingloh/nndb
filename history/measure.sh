@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Measure the current build and write a perf record for one history entry.
-# Usage:  history/measure.sh history/001-what-we-did.json brute-force
+# Usage:  history/measure.sh history/001-exact-brute-force-baseline.json brute-force
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

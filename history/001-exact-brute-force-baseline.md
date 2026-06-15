@@ -1,6 +1,6 @@
 # 001 — Exact brute-force baseline
 
-Perf record: [`001-what-we-did.json`](./001-what-we-did.json)
+Perf record: [`001-exact-brute-force-baseline.json`](./001-exact-brute-force-baseline.json)
 
 ## What we did
 
@@ -40,8 +40,4 @@ Measured on an 8-thread M-series mac. Throughput is a parallel batch; latency is
 ## Decisions
 
 - This entry measures the **algorithm in-process** — the clean floor, no framework noise. It stays the reference for "is the index itself faster."
-- We will **also** measure user-facing latency through a real networked server (the interface layer a cluster actually serves through). That's entry 002 — focused on serving latency under production-like traffic, not startup/recovery.
-
-## Next
-
-Entry 002: in-memory vector-search **server** (HTTP API) + a concurrent load generator measuring user-facing latency/QPS through the network.
+- We will **also** measure user-facing latency through a real networked server (the interface layer a cluster actually serves through), focused on serving latency under production-like traffic, not startup/recovery.

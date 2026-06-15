@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the in-memory server, run a concurrency sweep through the network, and
 # write a serving perf record (user-facing latency under load).
-# Usage:  history/measure-serving.sh history/002-what-we-did.json brute-force
+# Usage:  history/measure-serving.sh history/002-networked-serving.json brute-force
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

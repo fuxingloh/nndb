@@ -1,6 +1,6 @@
 # 002 — Networked serving + user-facing latency
 
-Perf record: [`002-what-we-did.json`](./002-what-we-did.json)
+Perf record: [`002-networked-serving.json`](./002-networked-serving.json)
 
 ## What we did
 
@@ -32,7 +32,3 @@ Focus per the brief: **user-facing latency under production-like traffic** — n
 4. **Concurrent compute is slower than isolated compute (49 → 76 ms).** Even at exactly core-count concurrency, with no queuing, p50 compute rises from 49 ms (1 client) to 76 ms (8 clients). That's the **memory-bandwidth contention** from entry 001 surfacing as latency: 8 cores all streaming 488 MB compete for the same memory bus. So the effective throughput ceiling (~100 QPS) is well below 8 × single-core (~160 QPS).
 
 5. **Implication for capacity planning:** to hold user-facing p50 near the floor (~50–77 ms), keep offered concurrency ≤ cores. To raise the QPS ceiling *and* drop latency, the answer isn't more cores (sublinear) or a faster transport (already negligible) — it's **touching less memory per query**, i.e. an approximate index.
-
-## Next
-
-Entry 003: first approximate index (IVF or HNSW). Re-run both harnesses — in-process (001) for the algorithm floor and this serving sweep (002) for user-facing latency — to show the recall/QPS/latency tradeoff end to end.
