@@ -38,6 +38,17 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     batch: usize,
 
+    /// Use only the first N base vectors (0 = all). Shrinks the working set so a
+    /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
+    /// (ground truth references the full base).
+    #[arg(long, default_value_t = 0)]
+    base_subset: usize,
+
+    /// Repeat the throughput pass this many times; report median (1st run is
+    /// warmup and discarded when reps>1). Gives variance instead of a single shot.
+    #[arg(long, default_value_t = 1)]
+    reps: usize,
+
     /// Name of the index/approach being measured (recorded with results)
     #[arg(long, default_value = "brute-force")]
     label: String,
@@ -71,7 +82,7 @@ fn peak_rss_bytes() -> u64 {
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
-    let base = fvecs::read_fvecs(args.data.join("sift_base.fvecs"))?;
+    let mut base = fvecs::read_fvecs(args.data.join("sift_base.fvecs"))?;
     let queries_all = fvecs::read_fvecs(args.data.join("sift_query.fvecs"))?;
     let gt = fvecs::read_ivecs(args.data.join("sift_groundtruth.ivecs"))?;
 
@@ -79,6 +90,13 @@ fn main() -> std::io::Result<()> {
         eprintln!("dimension mismatch: base={} query={}", base.dim, queries_all.dim);
         std::process::exit(1);
     }
+
+    // Optionally shrink the base to change the working-set size (cache vs DRAM).
+    let base_full = base.len();
+    if args.base_subset > 0 && args.base_subset < base_full {
+        base.data.truncate(args.base_subset * base.dim);
+    }
+    let recall_valid = base.len() == base_full; // GT references the full base
 
     let n_qps = clamp_count(args.queries, queries_all.len());
     let n_lat = clamp_count(args.latency_queries, queries_all.len());
@@ -89,16 +107,43 @@ fn main() -> std::io::Result<()> {
         dim: queries_all.dim,
     };
 
-    // --- Throughput pass: saturate all cores with a batch of searches -------
-    let t = Instant::now();
-    let found = if args.batch > 1 {
-        search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
-    } else {
-        search::knn_batch(&base, &qps_set, args.k)
+    // --- Throughput pass: repeat R times, discard warmup, take median -------
+    let reps = args.reps.max(1);
+    let run = |qs: &fvecs::Vectors| {
+        if args.batch > 1 {
+            search::knn_batch_tiled(&base, qs, args.k, args.batch)
+        } else {
+            search::knn_batch(&base, qs, args.k)
+        }
     };
-    let qps_secs = t.elapsed().as_secs_f64();
-    let qps = n_qps as f64 / qps_secs;
-    let recall = eval::recall_at_k(&found, &gt, args.k);
+    let mut times: Vec<f64> = Vec::with_capacity(reps);
+    let mut found = Vec::new();
+    for r in 0..reps {
+        let t = Instant::now();
+        found = run(&qps_set);
+        let dt = t.elapsed().as_secs_f64();
+        if !(reps > 1 && r == 0) {
+            times.push(dt); // first run is warmup when reps>1
+        }
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median_secs = times[times.len() / 2];
+    let t_mean = times.iter().sum::<f64>() / times.len() as f64;
+    let t_var = times.iter().map(|t| (t - t_mean).powi(2)).sum::<f64>() / times.len() as f64;
+    let cv = if t_mean > 0.0 { t_var.sqrt() / t_mean } else { 0.0 };
+
+    let qps = n_qps as f64 / median_secs;
+    let qps_min = n_qps as f64 / times[times.len() - 1]; // slowest run
+    let qps_max = n_qps as f64 / times[0]; // fastest run
+    // The bound-detection metric: time per distance, normalized over working-set
+    // size. Flat across cache->DRAM = compute-bound; rises = memory-bound.
+    let total_distances = n_qps as f64 * base.len() as f64;
+    let ns_per_distance = median_secs / total_distances * 1e9;
+    let recall = if recall_valid {
+        eval::recall_at_k(&found, &gt, args.k)
+    } else {
+        -1.0
+    };
     qps_set.data.clear(); // free the throughput slice before the latency pass
 
     // --- Latency pass: time each query on its own, build the distribution ---
@@ -125,7 +170,9 @@ fn main() -> std::io::Result<()> {
         println!(
             concat!(
                 "{{\"label\":\"{}\",\"dataset\":\"{}\",\"n_base\":{},\"dim\":{},",
-                "\"k\":{},\"batch\":{},\"recall_at_k\":{:.4},\"qps\":{:.1},\"qps_queries\":{},\"threads\":{},",
+                "\"k\":{},\"batch\":{},\"reps\":{},\"recall_at_k\":{:.4},\"recall_valid\":{},",
+                "\"qps\":{:.1},\"qps_min\":{:.1},\"qps_max\":{:.1},\"qps_cv\":{:.4},",
+                "\"ns_per_distance\":{:.4},\"qps_queries\":{},\"threads\":{},",
                 "\"latency_ms\":{{\"mean\":{:.3},\"p50\":{:.3},\"p95\":{:.3},\"p99\":{:.3},\"samples\":{}}},",
                 "\"memory_bytes\":{{\"index\":{},\"peak_rss\":{}}}}}"
             ),
@@ -135,8 +182,14 @@ fn main() -> std::io::Result<()> {
             base.dim,
             args.k,
             args.batch,
+            reps,
             recall,
+            recall_valid,
             qps,
+            qps_min,
+            qps_max,
+            cv,
+            ns_per_distance,
             n_qps,
             threads,
             mean,
@@ -151,12 +204,25 @@ fn main() -> std::io::Result<()> {
         let mb = |b: usize| b as f64 / (1u64 << 20) as f64;
         println!("approach:   {}", args.label);
         println!("dataset:    {}", args.data.display());
-        println!("base:       {} vectors x {} dim", base.len(), base.dim);
+        println!(
+            "base:       {} vectors x {} dim  ({:.1} MB working set)",
+            base.len(),
+            base.dim,
+            mb(index_bytes)
+        );
         println!();
-        println!("recall@{}:   {:.4}", args.k, recall);
+        if recall_valid {
+            println!("recall@{}:   {:.4}", args.k, recall);
+        } else {
+            println!("recall@{}:   n/a (base subset)", args.k);
+        }
         println!();
-        println!("throughput ({} searches, {} threads, batch={}):", n_qps, threads, args.batch);
-        println!("  QPS:      {:.1}", qps);
+        println!(
+            "throughput ({} searches, {} threads, batch={}, reps={}):",
+            n_qps, threads, args.batch, reps
+        );
+        println!("  QPS:      {:.1}  (min {:.1}, max {:.1}, CV {:.1}%)", qps, qps_min, qps_max, cv * 100.0);
+        println!("  ns/dist:  {:.4}  <- bound detector: flat across sizes = compute-bound", ns_per_distance);
         println!();
         println!("latency ({} single queries, sequential):", n_lat);
         println!("  mean:     {:.2} ms", mean);
