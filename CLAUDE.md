@@ -36,6 +36,10 @@ Each improvement is recorded as a numbered pair in `history/`: `NNN-<descriptive
 
 When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale.
 
+## Resources
+
+External references live in `resources/NNN-<slug>.md` (e.g. `001-ann-benchmarks.md`). **When you discover an external resource worth tracking, add a numbered note here and keep it current.** The bar: things that are *external, evolving, and trackable* — benchmark leaderboards, library docs, papers, OSS projects, tools, sites tracking compiler/SIMD optimizations, etc. **Not** universal/timeless concepts that any engineer knows (don't write a note explaining what SIMD or GEMM *is*) — only pointers to where the state of the art is published and changes over time.
+
 ## Architecture
 
 The benchmark mirrors the ANN-Benchmarks contract: a `base` vector set, a `query` set, and ground-truth nearest neighbors per query so recall is measurable. Data flows `fvecs` (load) → `search` (rank) → `eval` (score), orchestrated by `main`.
