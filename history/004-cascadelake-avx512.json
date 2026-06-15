@@ -1,0 +1,148 @@
+{
+  "date": "2026-06-15T17:49:48Z",
+  "commit": "16a7e7a",
+  "label": "cascadelake-avx512",
+  "cores": 8,
+  "experiment": "query-batching (tiled scan)",
+  "sweep": [
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "recall_at_k": 0.9994,
+      "qps": 50.9,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 140.589,
+        "p50": 140.555,
+        "p95": 140.928,
+        "p99": 141.207,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030385664
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 4,
+      "recall_at_k": 0.9994,
+      "qps": 48.9,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 140.358,
+        "p50": 140.324,
+        "p95": 140.671,
+        "p99": 140.735,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030381568
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 8,
+      "recall_at_k": 0.9994,
+      "qps": 48.8,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 140.298,
+        "p50": 140.269,
+        "p95": 140.474,
+        "p99": 140.602,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030504448
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 16,
+      "recall_at_k": 0.9994,
+      "qps": 48.9,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 139.913,
+        "p50": 139.907,
+        "p95": 139.99,
+        "p99": 140.093,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030328320
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 32,
+      "recall_at_k": 0.9994,
+      "qps": 48.8,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 140.368,
+        "p50": 140.282,
+        "p95": 140.693,
+        "p99": 140.86,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030451200
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 64,
+      "recall_at_k": 0.9994,
+      "qps": 49.1,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 139.943,
+        "p50": 139.947,
+        "p95": 140.051,
+        "p99": 140.064,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030512640
+      }
+    }
+  ],
+  "note": "Lightsail compute-optimized, Xeon 8223CL Cascade Lake, AVX-512 (zmm) emitted, NO FMA (vfmadd=0), virtualized (no PMU)"
+}
