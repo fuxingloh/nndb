@@ -1,0 +1,157 @@
+{
+  "date": "2026-06-15T18:54:31Z",
+  "commit": "c788184",
+  "label": "cascadelake-avx512",
+  "cores": 8,
+  "experiment": "working-set sweep (cache->DRAM bound detector)",
+  "ns_per_distance_ratio_max_over_min": 1.039,
+  "verdict": "COMPUTE-BOUND (ns/distance flat across cache->DRAM; memory speed irrelevant)",
+  "sweep": [
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 48737.9,
+      "qps_min": 47504.9,
+      "qps_max": 48910.4,
+      "qps_cv": 0.0118,
+      "ns_per_distance": 20.5179,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 0.149,
+        "p50": 0.149,
+        "p95": 0.149,
+        "p99": 0.149,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000,
+        "peak_rss": 1030402048
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 8000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 6232.9,
+      "qps_min": 6199.3,
+      "qps_max": 6288.3,
+      "qps_cv": 0.0046,
+      "ns_per_distance": 20.055,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 1.087,
+        "p50": 1.087,
+        "p95": 1.087,
+        "p99": 1.087,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 4096000,
+        "peak_rss": 1030459392
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 64000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 785.1,
+      "qps_min": 782.6,
+      "qps_max": 790.7,
+      "qps_cv": 0.0034,
+      "ns_per_distance": 19.9029,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 8.865,
+        "p50": 8.865,
+        "p95": 8.865,
+        "p99": 8.865,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 32768000,
+        "peak_rss": 1030524928
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 256000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 197.0,
+      "qps_min": 196.9,
+      "qps_max": 197.0,
+      "qps_cv": 0.0003,
+      "ns_per_distance": 19.8321,
+      "qps_queries": 781,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 35.797,
+        "p50": 35.797,
+        "p95": 35.797,
+        "p99": 35.797,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 131072000,
+        "peak_rss": 1030529024
+      }
+    },
+    {
+      "label": "cascadelake-avx512",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": 0.9995,
+      "recall_valid": true,
+      "qps": 50.7,
+      "qps_min": 50.2,
+      "qps_max": 50.7,
+      "qps_cv": 0.0039,
+      "ns_per_distance": 19.7409,
+      "qps_queries": 200,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 140.769,
+        "p50": 140.769,
+        "p95": 140.769,
+        "p99": 140.769,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030529024
+      }
+    }
+  ],
+  "note": "Lightsail virtualized; perf counters <not supported>, so detector is PMU-free working-set sweep"
+}
