@@ -1,0 +1,184 @@
+{
+  "date": "2026-06-16T07:27:06Z",
+  "commit": "657761b",
+  "label": "granite-rapids",
+  "cores": 8,
+  "experiment": "query-batching (tiled scan)",
+  "sweep": [
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 73.0,
+      "qps_min": 73.0,
+      "qps_max": 73.0,
+      "qps_cv": 0.0,
+      "ns_per_distance": 13.696,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 83.927,
+        "p50": 83.962,
+        "p95": 88.22,
+        "p99": 90.718,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030574080
+      }
+    },
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 4,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 112.3,
+      "qps_min": 112.3,
+      "qps_max": 112.3,
+      "qps_cv": 0.0,
+      "ns_per_distance": 8.9074,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 84.658,
+        "p50": 84.542,
+        "p95": 88.183,
+        "p99": 88.223,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030578176
+      }
+    },
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 8,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 112.3,
+      "qps_min": 112.3,
+      "qps_max": 112.3,
+      "qps_cv": 0.0,
+      "ns_per_distance": 8.9056,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 85.783,
+        "p50": 85.319,
+        "p95": 88.601,
+        "p99": 89.666,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030455296
+      }
+    },
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 16,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 113.1,
+      "qps_min": 113.1,
+      "qps_max": 113.1,
+      "qps_cv": 0.0,
+      "ns_per_distance": 8.8391,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 84.086,
+        "p50": 84.028,
+        "p95": 88.435,
+        "p99": 89.665,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030574080
+      }
+    },
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 32,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 114.3,
+      "qps_min": 114.3,
+      "qps_max": 114.3,
+      "qps_cv": 0.0,
+      "ns_per_distance": 8.7485,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 84.202,
+        "p50": 84.091,
+        "p95": 87.992,
+        "p99": 88.517,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030574080
+      }
+    },
+    {
+      "label": "granite-rapids",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 64,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 114.5,
+      "qps_min": 114.5,
+      "qps_max": 114.5,
+      "qps_cv": 0.0,
+      "ns_per_distance": 8.7363,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 82.455,
+        "p50": 82.118,
+        "p95": 86.088,
+        "p99": 86.517,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030578176
+      }
+    }
+  ],
+  "note": "Granite Rapids (Xeon 6975P-C), c8i.2xlarge spot, AVX-512+VBMI, FMA kernel; default build = 256-bit (ymm); forced-512 (zmm) = 52.9 QPS vs 73 default (slower); virtualized, no PMU"
+}
