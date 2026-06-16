@@ -1,0 +1,8 @@
+{
+  "date": "2026-06-16T09:35:02Z", "commit": "c6e3dc8", "machine": "granite-rapids (c8i.2xlarge, memory-bound)",
+  "label": "cohere-v3", "dataset": "data/cohere", "quant": "f32",
+  "n_base": 1000000, "dim": 1024, "k": 10, "reps": 3,
+  "recall_at_k": 1.0000, "qps": 9.5, "qps_cv": 0.001,
+  "ns_per_distance": 105.5503, "latency_ms": {"p50": 644.53},
+  "memory_bytes": {"index": 4096000000}
+}

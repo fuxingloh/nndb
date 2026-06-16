@@ -1,0 +1,9 @@
+{
+  "date": "2026-06-16T09:35:02Z", "commit": "c6e3dc8", "machine": "granite-rapids (c8i.2xlarge, memory-bound)",
+  "label": "cohere-v3", "dataset": "data/cohere", "quant": "i8",
+  "n_base": 1000000, "dim": 1024, "k": 10, "reps": 3,
+  "recall_at_k": 0.9830, "qps": 19.5, "qps_cv": 0.001,
+  "ns_per_distance": 51.2942, "latency_ms": {"p50": 564.07},
+  "memory_bytes": {"index": 1024000000},
+  "note": "int8 2.05x faster than f32 on memory-bound box; on compute-bound M3 it was 0.68x (slower). recall no-rerank."
+}
