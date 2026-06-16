@@ -1,0 +1,156 @@
+{
+  "date": "2026-06-16T06:25:55Z",
+  "commit": "3f34ac6",
+  "label": "m3-neon-fma",
+  "cores": 8,
+  "experiment": "working-set sweep (cache->DRAM bound detector)",
+  "ns_per_distance_ratio_max_over_min": 1.226,
+  "verdict": "COMPUTE-BOUND (ns/distance flat across cache->DRAM; memory speed irrelevant)",
+  "sweep": [
+    {
+      "label": "m3-neon-fma",
+      "dataset": "data/sift",
+      "n_base": 1000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 162743.9,
+      "qps_min": 155634.0,
+      "qps_max": 168186.2,
+      "qps_cv": 0.0286,
+      "ns_per_distance": 6.1446,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 0.032,
+        "p50": 0.032,
+        "p95": 0.032,
+        "p99": 0.032,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000,
+        "peak_rss": 1045069824
+      }
+    },
+    {
+      "label": "m3-neon-fma",
+      "dataset": "data/sift",
+      "n_base": 8000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 21205.5,
+      "qps_min": 20778.2,
+      "qps_max": 21573.8,
+      "qps_cv": 0.0127,
+      "ns_per_distance": 5.8947,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 0.249,
+        "p50": 0.249,
+        "p95": 0.249,
+        "p99": 0.249,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 4096000,
+        "peak_rss": 1045495808
+      }
+    },
+    {
+      "label": "m3-neon-fma",
+      "dataset": "data/sift",
+      "n_base": 64000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 2471.8,
+      "qps_min": 2208.9,
+      "qps_max": 2491.2,
+      "qps_cv": 0.0469,
+      "ns_per_distance": 6.3214,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 2.218,
+        "p50": 2.218,
+        "p95": 2.218,
+        "p99": 2.218,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 32768000,
+        "peak_rss": 1045495808
+      }
+    },
+    {
+      "label": "m3-neon-fma",
+      "dataset": "data/sift",
+      "n_base": 256000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 563.1,
+      "qps_min": 539.0,
+      "qps_max": 594.5,
+      "qps_cv": 0.0313,
+      "ns_per_distance": 6.9371,
+      "qps_queries": 781,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 9.48,
+        "p50": 9.48,
+        "p95": 9.48,
+        "p99": 9.48,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 131072000,
+        "peak_rss": 1045364736
+      }
+    },
+    {
+      "label": "m3-neon-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": 0.9995,
+      "recall_valid": true,
+      "qps": 138.3,
+      "qps_min": 129.3,
+      "qps_max": 141.9,
+      "qps_cv": 0.0342,
+      "ns_per_distance": 7.2284,
+      "qps_queries": 200,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 39.839,
+        "p50": 39.839,
+        "p95": 39.839,
+        "p99": 39.839,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1044905984
+      }
+    }
+  ]
+}

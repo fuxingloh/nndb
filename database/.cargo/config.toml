@@ -1,0 +1,8 @@
+# Build for the host CPU so the autovectorizer uses the widest SIMD it has
+# (AVX-512 on Sapphire/Cascade/Zen, NEON on Apple/Graviton) and hardware FMA
+# (required for f32::mul_add to be a single instruction, not a libcall on x86).
+#
+# This makes binaries NON-PORTABLE across CPU models — intended: we build
+# per-machine for benchmarking. Remove/override for distributable builds.
+[build]
+rustflags = ["-C", "target-cpu=native"]

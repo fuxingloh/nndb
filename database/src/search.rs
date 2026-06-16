@@ -12,16 +12,52 @@ use std::collections::BinaryHeap;
 
 /// Squared L2 distance. We rank by squared distance because the square root is
 /// monotonic — it doesn't change neighbor ordering and saves a sqrt per compare.
+///
+/// Written to let the autovectorizer use the **full SIMD width and FMA**, fixing
+/// the two defects the naive `.map().sum()` had (confirmed in disassembly: the
+/// reduction de-vectorized to per-lane scalar adds, and no `fmla`/`vfmadd`):
+///   1. `ACC` **independent accumulators** (a flat array) — the sum is no longer
+///      one serial dependency chain, so the scheduler keeps many FMAs in flight.
+///      `ACC = 32` maps to 2 AVX-512 `zmm` chains (16 f32 each) on x86, or 8
+///      NEON chains on aarch64 — both fill the width and hide FMA latency.
+///   2. `mul_add` — each step is a fused multiply-add (one `fmla` / `vfmadd`).
+///
+/// Build with `-C target-cpu=native` (see `.cargo/config.toml`) so this uses the
+/// widest SIMD the host has and hardware FMA. Reassociating the sum is bit-exact
+/// for SIFT's integer-valued vectors, so recall is unchanged.
 #[inline]
 pub fn l2_sq(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len());
-    a.iter()
-        .zip(b)
-        .map(|(x, y)| {
-            let d = x - y;
-            d * d
-        })
-        .sum()
+    const ACC: usize = 32;
+    let mut acc = [0.0f32; ACC];
+    let n = a.len();
+    let blocks = n / ACC;
+
+    for blk in 0..blocks {
+        let off = blk * ACC;
+        for l in 0..ACC {
+            let d = a[off + l] - b[off + l];
+            acc[l] = d.mul_add(d, acc[l]); // fused multiply-add into lane l
+        }
+    }
+
+    // Tail for dims not divisible by ACC (e.g. tiny test vectors).
+    let mut tail = 0.0f32;
+    for i in (blocks * ACC)..n {
+        let d = a[i] - b[i];
+        tail = d.mul_add(d, tail);
+    }
+
+    // Tree-reduce the accumulators: parallel adds, log-depth chain (not a
+    // serial 32-add chain), and each round is itself a vector add.
+    let mut w = ACC;
+    while w > 1 {
+        w /= 2;
+        for l in 0..w {
+            acc[l] += acc[l + w];
+        }
+    }
+    acc[0] + tail
 }
 
 /// Total-order wrapper so f32 distances can live in a `BinaryHeap`.
