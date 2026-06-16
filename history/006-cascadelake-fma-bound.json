@@ -1,0 +1,157 @@
+{
+  "date": "2026-06-16T06:27:47Z",
+  "commit": "8fdb402",
+  "label": "cascadelake-avx512-fma",
+  "cores": 8,
+  "experiment": "working-set sweep (cache->DRAM bound detector)",
+  "ns_per_distance_ratio_max_over_min": 1.093,
+  "verdict": "COMPUTE-BOUND (ns/distance flat across cache->DRAM; memory speed irrelevant)",
+  "sweep": [
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 66825.4,
+      "qps_min": 66399.2,
+      "qps_max": 67296.3,
+      "qps_cv": 0.0047,
+      "ns_per_distance": 14.9644,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 0.069,
+        "p50": 0.069,
+        "p95": 0.069,
+        "p99": 0.069,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000,
+        "peak_rss": 1030516736
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 8000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 8367.4,
+      "qps_min": 8348.8,
+      "qps_max": 8376.3,
+      "qps_cv": 0.0011,
+      "ns_per_distance": 14.9389,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 0.52,
+        "p50": 0.52,
+        "p95": 0.52,
+        "p99": 0.52,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 4096000,
+        "peak_rss": 1030524928
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 64000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 1018.7,
+      "qps_min": 1001.0,
+      "qps_max": 1024.9,
+      "qps_cv": 0.009,
+      "ns_per_distance": 15.3378,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 4.262,
+        "p50": 4.262,
+        "p95": 4.262,
+        "p99": 4.262,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 32768000,
+        "peak_rss": 1030402048
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 256000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": -1.0,
+      "recall_valid": false,
+      "qps": 239.1,
+      "qps_min": 235.8,
+      "qps_max": 246.1,
+      "qps_cv": 0.0171,
+      "ns_per_distance": 16.3343,
+      "qps_queries": 781,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 19.291,
+        "p50": 19.291,
+        "p95": 19.291,
+        "p99": 19.291,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 131072000,
+        "peak_rss": 1030524928
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 6,
+      "recall_at_k": 0.9995,
+      "recall_valid": true,
+      "qps": 62.4,
+      "qps_min": 59.4,
+      "qps_max": 62.9,
+      "qps_cv": 0.0212,
+      "ns_per_distance": 16.0236,
+      "qps_queries": 200,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 75.701,
+        "p50": 75.701,
+        "p95": 75.701,
+        "p99": 75.701,
+        "samples": 1
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030402048
+      }
+    }
+  ],
+  "note": "Cascade Lake, new FMA kernel; LLVM used 256-bit (ymm) FMA, NOT 512 (prefer-256-bit heuristic vs AVX-512 downclock)"
+}

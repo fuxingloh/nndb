@@ -1,0 +1,184 @@
+{
+  "date": "2026-06-16T06:29:36Z",
+  "commit": "8fdb402",
+  "label": "cascadelake-avx512-fma",
+  "cores": 8,
+  "experiment": "query-batching (tiled scan)",
+  "sweep": [
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 1,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 63.1,
+      "qps_min": 63.1,
+      "qps_max": 63.1,
+      "qps_cv": 0.0,
+      "ns_per_distance": 15.8377,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 74.843,
+        "p50": 74.609,
+        "p95": 75.731,
+        "p99": 76.04,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030512640
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 4,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 65.4,
+      "qps_min": 65.4,
+      "qps_max": 65.4,
+      "qps_cv": 0.0,
+      "ns_per_distance": 15.2794,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 74.896,
+        "p50": 74.886,
+        "p95": 75.396,
+        "p99": 75.49,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030520832
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 8,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 66.1,
+      "qps_min": 66.1,
+      "qps_max": 66.1,
+      "qps_cv": 0.0,
+      "ns_per_distance": 15.1273,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 76.581,
+        "p50": 76.678,
+        "p95": 77.56,
+        "p99": 77.6,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030402048
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 16,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 66.2,
+      "qps_min": 66.2,
+      "qps_max": 66.2,
+      "qps_cv": 0.0,
+      "ns_per_distance": 15.1084,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 76.97,
+        "p50": 76.882,
+        "p95": 77.519,
+        "p99": 78.074,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030520832
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 32,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 66.6,
+      "qps_min": 66.6,
+      "qps_max": 66.6,
+      "qps_cv": 0.0,
+      "ns_per_distance": 15.0219,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 77.528,
+        "p50": 77.375,
+        "p95": 78.466,
+        "p99": 78.519,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030529024
+      }
+    },
+    {
+      "label": "cascadelake-avx512-fma",
+      "dataset": "data/sift",
+      "n_base": 1000000,
+      "dim": 128,
+      "k": 10,
+      "batch": 64,
+      "reps": 1,
+      "recall_at_k": 0.9994,
+      "recall_valid": true,
+      "qps": 66.7,
+      "qps_min": 66.7,
+      "qps_max": 66.7,
+      "qps_cv": 0.0,
+      "ns_per_distance": 14.982,
+      "qps_queries": 1000,
+      "threads": 8,
+      "latency_ms": {
+        "mean": 74.513,
+        "p50": 74.345,
+        "p95": 75.269,
+        "p99": 76.021,
+        "samples": 30
+      },
+      "memory_bytes": {
+        "index": 512000000,
+        "peak_rss": 1030402048
+      }
+    }
+  ],
+  "note": "Cascade Lake, new FMA kernel; LLVM used 256-bit (ymm) FMA, NOT 512 (prefer-256-bit heuristic vs AVX-512 downclock)"
+}
