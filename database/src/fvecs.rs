@@ -106,6 +106,19 @@ pub fn read_fvecs(path: impl AsRef<Path>) -> io::Result<Vectors> {
     Ok(Vectors { data, dim })
 }
 
+/// Write integer vectors as `.ivecs` (per row: `[i32 len][len × i32]`).
+/// Used to persist generated ground truth (top-k neighbor ids per query).
+pub fn write_ivecs(path: impl AsRef<Path>, rows: &[Vec<u32>]) -> io::Result<()> {
+    let mut buf: Vec<u8> = Vec::new();
+    for r in rows {
+        buf.extend_from_slice(&(r.len() as i32).to_le_bytes());
+        for &v in r {
+            buf.extend_from_slice(&(v as i32).to_le_bytes());
+        }
+    }
+    std::fs::write(path, buf)
+}
+
 /// Read an `.ivecs` file (32-bit signed int components).
 pub fn read_ivecs(path: impl AsRef<Path>) -> io::Result<IntVectors> {
     let buf = read_all(path)?;

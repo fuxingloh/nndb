@@ -18,13 +18,26 @@ use vector_search::{eval, fvecs, search};
 #[derive(Parser)]
 #[command(about = "In-memory exact vector search baseline (SIFT1M / .fvecs)")]
 struct Args {
-    /// Directory holding sift_base.fvecs, sift_query.fvecs, sift_groundtruth.ivecs
+    /// Directory holding <prefix>_base.fvecs, <prefix>_query.fvecs, <prefix>_groundtruth.ivecs
     #[arg(long, default_value = "data/sift")]
     data: PathBuf,
+
+    /// Dataset file prefix (e.g. "sift", "cohere"): <prefix>_base.fvecs etc.
+    #[arg(long, default_value = "sift")]
+    prefix: String,
 
     /// Number of nearest neighbors to retrieve
     #[arg(long, default_value_t = 10)]
     k: usize,
+
+    /// Generate ground truth instead of benchmarking: exact top-`gt_k` for every
+    /// query (full base, all queries), written as .ivecs to this path, then exit.
+    #[arg(long)]
+    write_ground_truth: Option<PathBuf>,
+
+    /// Neighbors per query when generating ground truth
+    #[arg(long, default_value_t = 100)]
+    gt_k: usize,
 
     /// Number of searches in the throughput (QPS) pass
     #[arg(long, default_value_t = 1000)]
@@ -82,14 +95,31 @@ fn peak_rss_bytes() -> u64 {
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
-    let mut base = fvecs::read_fvecs(args.data.join("sift_base.fvecs"))?;
-    let queries_all = fvecs::read_fvecs(args.data.join("sift_query.fvecs"))?;
-    let gt = fvecs::read_ivecs(args.data.join("sift_groundtruth.ivecs"))?;
+    let p = &args.prefix;
+    let mut base = fvecs::read_fvecs(args.data.join(format!("{p}_base.fvecs")))?;
+    let queries_all = fvecs::read_fvecs(args.data.join(format!("{p}_query.fvecs")))?;
 
     if base.dim != queries_all.dim {
         eprintln!("dimension mismatch: base={} query={}", base.dim, queries_all.dim);
         std::process::exit(1);
     }
+
+    // --- Ground-truth generation mode: exact top-gt_k for all queries, then exit.
+    // Used for datasets without a published GT (e.g. Cohere embeddings). For
+    // cosine, the vectors are unit-normalized at prep time so L2 ranking == cosine.
+    if let Some(out) = &args.write_ground_truth {
+        let found = search::knn_batch(&base, &queries_all, args.gt_k);
+        fvecs::write_ivecs(out, &found)?;
+        println!(
+            "wrote ground truth: {} queries x {} neighbors -> {}",
+            queries_all.len(),
+            args.gt_k,
+            out.display()
+        );
+        return Ok(());
+    }
+
+    let gt = fvecs::read_ivecs(args.data.join(format!("{p}_groundtruth.ivecs")))?;
 
     // Optionally shrink the base to change the working-set size (cache vs DRAM).
     let base_full = base.len();
