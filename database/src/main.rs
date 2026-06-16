@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::Parser;
-use vector_search::{eval, fvecs, search};
+use vector_search::{eval, fvecs, quant, search};
 
 #[derive(Parser)]
 #[command(about = "In-memory exact vector search baseline (SIFT1M / .fvecs)")]
@@ -50,6 +50,11 @@ struct Args {
     /// Query tile size: reuse each base vector across this many queries (1 = per-query)
     #[arg(long, default_value_t = 1)]
     batch: usize,
+
+    /// Quantization for the scan: "f32" (exact) or "i8" (int8 scalar, ~4x smaller).
+    /// Assumes unit-normalized vectors (dot == cosine).
+    #[arg(long, default_value = "f32")]
+    quant: String,
 
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
@@ -137,20 +142,27 @@ fn main() -> std::io::Result<()> {
         dim: queries_all.dim,
     };
 
+    // Build int8-quantized base + query set once if requested.
+    let quant_i8 = args.quant == "i8";
+    let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
+    let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
+
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
-    let run = |qs: &fvecs::Vectors| {
-        if args.batch > 1 {
-            search::knn_batch_tiled(&base, qs, args.k, args.batch)
+    let run = || {
+        if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
+            quant::knn_i8_batch(qb, qq, args.k)
+        } else if args.batch > 1 {
+            search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
         } else {
-            search::knn_batch(&base, qs, args.k)
+            search::knn_batch(&base, &qps_set, args.k)
         }
     };
     let mut times: Vec<f64> = Vec::with_capacity(reps);
     let mut found = Vec::new();
     for r in 0..reps {
         let t = Instant::now();
-        found = run(&qps_set);
+        found = run();
         let dt = t.elapsed().as_secs_f64();
         if !(reps > 1 && r == 0) {
             times.push(dt); // first run is warmup when reps>1
@@ -180,9 +192,15 @@ fn main() -> std::io::Result<()> {
     let mut lat_ms: Vec<f64> = Vec::with_capacity(n_lat);
     for q in 0..n_lat {
         let t = Instant::now();
-        let r = search::knn(&base, queries_all.row(q), args.k);
-        lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-        black_box(r); // keep the search from being optimized away
+        if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
+            let r = quant::knn_i8(qb, qq.row(q.min(qq.len() - 1)), args.k);
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        } else {
+            let r = search::knn(&base, queries_all.row(q), args.k);
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        }
     }
     lat_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let mean = lat_ms.iter().sum::<f64>() / lat_ms.len() as f64;
@@ -191,7 +209,11 @@ fn main() -> std::io::Result<()> {
     let p99 = eval::percentile(&lat_ms, 99.0);
 
     // --- Memory -------------------------------------------------------------
-    let index_bytes = base.data.len() * std::mem::size_of::<f32>();
+    let index_bytes = if let Some(qb) = &qbase {
+        qb.data.len() // int8: 1 byte per element
+    } else {
+        base.data.len() * std::mem::size_of::<f32>()
+    };
     let rss = peak_rss_bytes();
     let threads = rayon::current_num_threads();
 
@@ -199,7 +221,7 @@ fn main() -> std::io::Result<()> {
         // Single line; benchmark/run.sh enriches it with date + commit.
         println!(
             concat!(
-                "{{\"label\":\"{}\",\"dataset\":\"{}\",\"n_base\":{},\"dim\":{},",
+                "{{\"label\":\"{}\",\"dataset\":\"{}\",\"quant\":\"{}\",\"n_base\":{},\"dim\":{},",
                 "\"k\":{},\"batch\":{},\"reps\":{},\"recall_at_k\":{:.4},\"recall_valid\":{},",
                 "\"qps\":{:.1},\"qps_min\":{:.1},\"qps_max\":{:.1},\"qps_cv\":{:.4},",
                 "\"ns_per_distance\":{:.4},\"qps_queries\":{},\"threads\":{},",
@@ -208,6 +230,7 @@ fn main() -> std::io::Result<()> {
             ),
             args.label,
             args.data.display(),
+            args.quant,
             base.len(),
             base.dim,
             args.k,
@@ -232,7 +255,7 @@ fn main() -> std::io::Result<()> {
         );
     } else {
         let mb = |b: usize| b as f64 / (1u64 << 20) as f64;
-        println!("approach:   {}", args.label);
+        println!("approach:   {}  (quant={})", args.label, args.quant);
         println!("dataset:    {}", args.data.display());
         println!(
             "base:       {} vectors x {} dim  ({:.1} MB working set)",

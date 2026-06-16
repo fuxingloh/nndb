@@ -6,4 +6,5 @@
 
 pub mod eval;
 pub mod fvecs;
+pub mod quant;
 pub mod search;
