@@ -83,9 +83,125 @@ pub fn knn_i8_batch(base: &QuantI8, queries: &QuantI8, k: usize) -> Vec<Vec<u32>
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Binary quantization (1 bit/dim = sign) + two-stage rerank.
+// ---------------------------------------------------------------------------
+
+/// Sign-bit binary vectors, packed into u64 words. For angular/cosine,
+/// agreement of sign bits approximates similarity → rank by *min* Hamming.
+pub struct QuantBinary {
+    pub data: Vec<u64>,
+    pub words: usize, // u64 words per vector = ceil(dim/64)
+    pub dim: usize,
+}
+
+impl QuantBinary {
+    pub fn from_f32(v: &Vectors) -> Self {
+        let words = v.dim.div_ceil(64);
+        let n = v.len();
+        let mut data = vec![0u64; n * words];
+        for i in 0..n {
+            let row = v.row(i);
+            let out = &mut data[i * words..(i + 1) * words];
+            for (d, &x) in row.iter().enumerate() {
+                if x > 0.0 {
+                    out[d / 64] |= 1u64 << (d % 64);
+                }
+            }
+        }
+        QuantBinary { data, words, dim: v.dim }
+    }
+
+    #[inline]
+    pub fn row(&self, i: usize) -> &[u64] {
+        &self.data[i * self.words..(i + 1) * self.words]
+    }
+    pub fn len(&self) -> usize {
+        self.data.len() / self.words
+    }
+}
+
+/// Hamming distance (differing sign bits) via XOR + popcount (hardware POPCNT/CNT).
+#[inline]
+pub fn hamming(a: &[u64], b: &[u64]) -> u32 {
+    let mut d = 0u32;
+    for i in 0..a.len() {
+        d += (a[i] ^ b[i]).count_ones();
+    }
+    d
+}
+
+/// Top-k by smallest Hamming (most agreeing sign bits).
+pub fn knn_binary(base: &QuantBinary, query: &[u64], k: usize) -> Vec<u32> {
+    // Max-heap on (hamming, idx): root is the worst kept; keep the k smallest.
+    let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::with_capacity(k + 1);
+    for i in 0..base.len() {
+        let h = hamming(query, base.row(i));
+        if heap.len() < k {
+            heap.push((h, i as u32));
+        } else if h < heap.peek().unwrap().0 {
+            heap.pop();
+            heap.push((h, i as u32));
+        }
+    }
+    let mut v = heap.into_vec();
+    v.sort_unstable(); // ascending Hamming, then idx
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
+/// Rerank candidate ids with exact f32 (L2 == cosine for unit vectors) → top-k.
+pub fn rerank(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
+    let mut scored: Vec<(f32, u32)> = cands
+        .iter()
+        .map(|&c| (crate::search::l2_sq(fquery, fbase.row(c as usize)), c))
+        .collect();
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    scored.into_iter().take(k).map(|(_, i)| i).collect()
+}
+
+/// Binary scan only (no rerank), batched.
+pub fn knn_binary_batch(base: &QuantBinary, queries: &QuantBinary, k: usize) -> Vec<Vec<u32>> {
+    (0..queries.len())
+        .into_par_iter()
+        .map(|q| knn_binary(base, queries.row(q), k))
+        .collect()
+}
+
+/// Two-stage: binary scan → top-`c` candidates → exact f32 rerank → top-k.
+pub fn knn_binary_rerank_batch(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    fbase: &Vectors,
+    fqueries: &Vectors,
+    k: usize,
+    c: usize,
+) -> Vec<Vec<u32>> {
+    (0..bqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            let cands = knn_binary(bbase, bqueries.row(q), c.max(k));
+            rerank(fbase, fqueries.row(q), &cands, k)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_rerank_recovers_exact() {
+        // 4 unit-ish vectors; rerank of binary candidates should return exact top-1.
+        let base = Vectors {
+            data: vec![1.0, 0.1, 0.9, 0.2, -1.0, 0.0, 0.2, 1.0],
+            dim: 2,
+        };
+        let q = Vectors { data: vec![1.0, 0.15], dim: 2 };
+        let bb = QuantBinary::from_f32(&base);
+        let bq = QuantBinary::from_f32(&q);
+        let got = knn_binary_rerank_batch(&bb, &bq, &base, &q, 1, 4);
+        assert_eq!(got[0][0], 0); // exact nearest after rerank
+    }
 
     #[test]
     fn i8_matches_exact_on_simple() {

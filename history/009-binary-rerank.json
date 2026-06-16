@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-16T15:56:31Z", "commit": "2f4521f",
+  "machine": "granite-rapids (c8i.2xlarge, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "reps": 2,
+  "results": [
+    {"scheme": "f32",            "rerank": 0,    "recall_at_10": 1.0000, "qps": 9.5,   "p50_ms": 644.5, "index_mb": 3906},
+    {"scheme": "i8",             "rerank": 0,    "recall_at_10": 0.9830, "qps": 19.8,  "p50_ms": 589.3, "index_mb": 977},
+    {"scheme": "binary",         "rerank": 0,    "recall_at_10": 0.4681, "qps": 612.8, "p50_ms": 10.2,  "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 20,   "recall_at_10": 0.6297, "qps": 582.6, "p50_ms": 7.9,   "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 50,   "recall_at_10": 0.7977, "qps": 572.6, "p50_ms": 9.1,   "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 100,  "recall_at_10": 0.8865, "qps": 615.0, "p50_ms": 8.2,   "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 200,  "recall_at_10": 0.9419, "qps": 609.9, "p50_ms": 8.5,   "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 500,  "recall_at_10": 0.9826, "qps": 598.1, "p50_ms": 9.8,   "index_mb": 122},
+    {"scheme": "binary+rerank",  "rerank": 1000, "recall_at_10": 0.9943, "qps": 584.5, "p50_ms": 9.9,   "index_mb": 122}
+  ]
+}

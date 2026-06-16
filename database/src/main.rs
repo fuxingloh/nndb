@@ -51,10 +51,16 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     batch: usize,
 
-    /// Quantization for the scan: "f32" (exact) or "i8" (int8 scalar, ~4x smaller).
-    /// Assumes unit-normalized vectors (dot == cosine).
+    /// Quantization for the scan: "f32" (exact), "i8" (int8 scalar, ~4x smaller),
+    /// or "binary" (1 bit/dim, ~32x smaller, Hamming). Assumes unit-normalized
+    /// vectors (dot == cosine).
     #[arg(long, default_value = "f32")]
     quant: String,
+
+    /// Two-stage rerank candidate count C (binary only). 0 = no rerank: take the
+    /// quantized top-k directly. >0: binary top-C, then exact f32 rerank to top-k.
+    #[arg(long, default_value_t = 0)]
+    rerank: usize,
 
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
@@ -144,14 +150,23 @@ fn main() -> std::io::Result<()> {
 
     // Build int8-quantized base + query set once if requested.
     let quant_i8 = args.quant == "i8";
+    let quant_bin = args.quant == "binary";
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
+    let bbase = if quant_bin { Some(quant::QuantBinary::from_f32(&base)) } else { None };
+    let bquery = if quant_bin { Some(quant::QuantBinary::from_f32(&qps_set)) } else { None };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
     let run = || {
         if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
             quant::knn_i8_batch(qb, qq, args.k)
+        } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
+            if args.rerank > 0 {
+                quant::knn_binary_rerank_batch(bb, bq, &base, &qps_set, args.k, args.rerank)
+            } else {
+                quant::knn_binary_batch(bb, bq, args.k)
+            }
         } else if args.batch > 1 {
             search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
         } else {
@@ -196,6 +211,16 @@ fn main() -> std::io::Result<()> {
             let r = quant::knn_i8(qb, qq.row(q.min(qq.len() - 1)), args.k);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);
+        } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
+            let qi = q.min(bq.len() - 1);
+            let r = if args.rerank > 0 {
+                let cands = quant::knn_binary(bb, bq.row(qi), args.rerank.max(args.k));
+                quant::rerank(&base, queries_all.row(q), &cands, args.k)
+            } else {
+                quant::knn_binary(bb, bq.row(qi), args.k)
+            };
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
         } else {
             let r = search::knn(&base, queries_all.row(q), args.k);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -211,6 +236,8 @@ fn main() -> std::io::Result<()> {
     // --- Memory -------------------------------------------------------------
     let index_bytes = if let Some(qb) = &qbase {
         qb.data.len() // int8: 1 byte per element
+    } else if let Some(bb) = &bbase {
+        bb.data.len() * 8 // binary: u64 words
     } else {
         base.data.len() * std::mem::size_of::<f32>()
     };
@@ -222,7 +249,7 @@ fn main() -> std::io::Result<()> {
         println!(
             concat!(
                 "{{\"label\":\"{}\",\"dataset\":\"{}\",\"quant\":\"{}\",\"n_base\":{},\"dim\":{},",
-                "\"k\":{},\"batch\":{},\"reps\":{},\"recall_at_k\":{:.4},\"recall_valid\":{},",
+                "\"k\":{},\"batch\":{},\"rerank\":{},\"reps\":{},\"recall_at_k\":{:.4},\"recall_valid\":{},",
                 "\"qps\":{:.1},\"qps_min\":{:.1},\"qps_max\":{:.1},\"qps_cv\":{:.4},",
                 "\"ns_per_distance\":{:.4},\"qps_queries\":{},\"threads\":{},",
                 "\"latency_ms\":{{\"mean\":{:.3},\"p50\":{:.3},\"p95\":{:.3},\"p99\":{:.3},\"samples\":{}}},",
@@ -235,6 +262,7 @@ fn main() -> std::io::Result<()> {
             base.dim,
             args.k,
             args.batch,
+            args.rerank,
             reps,
             recall,
             recall_valid,
