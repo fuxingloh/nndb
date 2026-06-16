@@ -224,8 +224,18 @@ pub fn asym_score(query: &[f32], doc: &[u64]) -> f32 {
     s
 }
 
-/// Top-k docs by largest asymmetric score (full-precision query vs binary docs).
+/// Top-k by largest asymmetric score. Dispatches to the LUT kernel when dim is a
+/// multiple of 4 (the fast path), else the direct set-bit kernel (small/odd dims).
 pub fn knn_asym(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
+    if bbase.dim % 4 == 0 {
+        knn_asym_lut(bbase, query, k)
+    } else {
+        knn_asym_setbit(bbase, query, k)
+    }
+}
+
+/// Direct kernel: iterate set bits + gather. Correct but slow (no precompute).
+fn knn_asym_setbit(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
     let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(k + 1);
     for i in 0..bbase.len() {
         let s = ScoreF(asym_score(query, bbase.row(i)));
@@ -237,7 +247,49 @@ pub fn knn_asym(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
         }
     }
     let mut v: Vec<(ScoreF, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
-    v.sort_unstable_by(|a, b| b.0.cmp(&a.0)); // descending score
+    v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
+/// LUT kernel — the Exa trick. Since docs are binary, precompute one table per
+/// 4-bit nibble position: table[p][pattern] = masked query-sum for those 4 dims
+/// under that sign pattern. Scanning a doc = sum the looked-up partials (one
+/// indexed lookup per nibble), instead of per-bit gathers. 1024-d → 256 tables ×
+/// 16 = 16 KB (L1-resident). Same score as the direct kernel → same recall.
+/// (Full speed wants `vpshufb`/`vpermb` SIMD gather over an int8 table; this is
+/// the scalar version that proves the structure.)
+fn knn_asym_lut(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
+    let nib = bbase.dim / 4;
+    let mut lut = vec![0f32; nib * 16];
+    for p in 0..nib {
+        let (q0, q1, q2, q3) = (query[4 * p], query[4 * p + 1], query[4 * p + 2], query[4 * p + 3]);
+        let t = &mut lut[16 * p..16 * p + 16];
+        for (pat, e) in t.iter_mut().enumerate() {
+            *e = (if pat & 1 != 0 { q0 } else { 0.0 })
+                + (if pat & 2 != 0 { q1 } else { 0.0 })
+                + (if pat & 4 != 0 { q2 } else { 0.0 })
+                + (if pat & 8 != 0 { q3 } else { 0.0 });
+        }
+    }
+    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(k + 1);
+    for i in 0..bbase.len() {
+        let doc = bbase.row(i);
+        let mut s = 0f32;
+        for p in 0..nib {
+            let word = doc[p >> 4]; // 16 nibbles per u64
+            let nibble = ((word >> ((p & 15) * 4)) & 0xF) as usize;
+            s += lut[16 * p + nibble];
+        }
+        let sc = ScoreF(s);
+        if heap.len() < k {
+            heap.push(Reverse((sc, i as u32)));
+        } else if sc > heap.peek().unwrap().0 .0 {
+            heap.pop();
+            heap.push(Reverse((sc, i as u32)));
+        }
+    }
+    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
+    v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
     v.into_iter().map(|(_, i)| i).collect()
 }
 
