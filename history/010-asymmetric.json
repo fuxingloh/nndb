@@ -1,0 +1,16 @@
+{
+  "date": "2026-06-16T16:39:40Z", "commit": "cffbba3",
+  "machine": "granite-rapids (c8i.2xlarge, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 500, "reps": 1,
+  "note": "asymmetric (full-precision query x binary doc, direct set-bit kernel, NO vpshufb LUT yet) vs symmetric (009). Asym higher recall at every C (~5x smaller C for same recall) but ~100x slower scan -> LUT needed.",
+  "symmetric_binary": [ {"rerank": 0, "recall_at_10": 0.4662, "scan_qps": 690.2} ],
+  "asymmetric": [
+    {"rerank": 0,   "recall_at_10": 0.6072, "scan_qps": 6.7},
+    {"rerank": 20,  "recall_at_10": 0.7992, "scan_qps": 6.7},
+    {"rerank": 50,  "recall_at_10": 0.9348, "scan_qps": 6.8},
+    {"rerank": 100, "recall_at_10": 0.9760, "scan_qps": 6.7},
+    {"rerank": 200, "recall_at_10": 0.9934, "scan_qps": 6.6}
+  ],
+  "index_mb": 122
+}

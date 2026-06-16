@@ -151,9 +151,11 @@ fn main() -> std::io::Result<()> {
     // Build int8-quantized base + query set once if requested.
     let quant_i8 = args.quant == "i8";
     let quant_bin = args.quant == "binary";
+    let quant_asym = args.quant == "asym";
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
-    let bbase = if quant_bin { Some(quant::QuantBinary::from_f32(&base)) } else { None };
+    // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
+    let bbase = if quant_bin || quant_asym { Some(quant::QuantBinary::from_f32(&base)) } else { None };
     let bquery = if quant_bin { Some(quant::QuantBinary::from_f32(&qps_set)) } else { None };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
@@ -161,6 +163,9 @@ fn main() -> std::io::Result<()> {
     let run = || {
         if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
             quant::knn_i8_batch(qb, qq, args.k)
+        } else if quant_asym {
+            // asymmetric: full-precision query (qps_set) vs binary docs (bbase)
+            quant::knn_asym_rerank_batch(bbase.as_ref().unwrap(), &base, &qps_set, args.k, args.rerank)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             if args.rerank > 0 {
                 quant::knn_binary_rerank_batch(bb, bq, &base, &qps_set, args.k, args.rerank)
@@ -209,6 +214,16 @@ fn main() -> std::io::Result<()> {
         let t = Instant::now();
         if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
             let r = quant::knn_i8(qb, qq.row(q.min(qq.len() - 1)), args.k);
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        } else if quant_asym {
+            let bb = bbase.as_ref().unwrap();
+            let r = if args.rerank > 0 {
+                let cands = quant::knn_asym(bb, queries_all.row(q), args.rerank.max(args.k));
+                quant::rerank(&base, queries_all.row(q), &cands, args.k)
+            } else {
+                quant::knn_asym(bb, queries_all.row(q), args.k)
+            };
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {

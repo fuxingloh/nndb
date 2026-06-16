@@ -7,7 +7,7 @@
 
 use crate::fvecs::Vectors;
 use rayon::prelude::*;
-use std::cmp::Reverse;
+use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
 /// int8-quantized vectors: symmetric scalar quant with one global scale.
@@ -185,9 +185,100 @@ pub fn knn_binary_rerank_batch(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Asymmetric scoring: full-precision query x binary doc.
+// score = sum_i q_i * sign(doc_i) = 2*(sum of q_i where doc bit set) - sum(q).
+// Ranking only needs the masked sum (the 2x and -sum(q) are monotonic per query),
+// so the query keeps full precision while docs stay 1 bit. Higher stage-1 recall
+// than symmetric Hamming (which also throws away the query). Rank by MAX score.
+// ---------------------------------------------------------------------------
+
+/// Total-order f32 wrapper for the score heap.
+#[derive(Clone, Copy, PartialEq)]
+struct ScoreF(f32);
+impl Eq for ScoreF {}
+impl PartialOrd for ScoreF {
+    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for ScoreF {
+    fn cmp(&self, o: &Self) -> Ordering {
+        self.0.total_cmp(&o.0)
+    }
+}
+
+/// Asymmetric score: sum of float-query values at the doc's set sign-bits.
+/// (Direct form; the `vpshufb` LUT is a faster way to compute the same value.)
+#[inline]
+pub fn asym_score(query: &[f32], doc: &[u64]) -> f32 {
+    let mut s = 0.0f32;
+    for (w, &word) in doc.iter().enumerate() {
+        let mut bits = word;
+        let base = w * 64;
+        while bits != 0 {
+            s += query[base + bits.trailing_zeros() as usize];
+            bits &= bits - 1; // clear lowest set bit
+        }
+    }
+    s
+}
+
+/// Top-k docs by largest asymmetric score (full-precision query vs binary docs).
+pub fn knn_asym(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
+    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(k + 1);
+    for i in 0..bbase.len() {
+        let s = ScoreF(asym_score(query, bbase.row(i)));
+        if heap.len() < k {
+            heap.push(Reverse((s, i as u32)));
+        } else if s > heap.peek().unwrap().0 .0 {
+            heap.pop();
+            heap.push(Reverse((s, i as u32)));
+        }
+    }
+    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
+    v.sort_unstable_by(|a, b| b.0.cmp(&a.0)); // descending score
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
+/// Asymmetric scan, optional f32 rerank (c=0 → take the asym top-k directly).
+pub fn knn_asym_rerank_batch(
+    bbase: &QuantBinary,
+    fbase: &Vectors,
+    fqueries: &Vectors,
+    k: usize,
+    c: usize,
+) -> Vec<Vec<u32>> {
+    (0..fqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            if c == 0 {
+                knn_asym(bbase, fqueries.row(q), k)
+            } else {
+                let cands = knn_asym(bbase, fqueries.row(q), c.max(k));
+                rerank(fbase, fqueries.row(q), &cands, k)
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asym_beats_symmetric_ranking() {
+        // Query close to vec 0; asym (keeps query magnitude) ranks it first.
+        let base = Vectors {
+            data: vec![0.9, 0.1, -0.9, 0.1, 0.1, 0.9, -0.1, -0.9],
+            dim: 2,
+        };
+        let q = Vectors { data: vec![1.0, 0.2], dim: 2 };
+        let bb = QuantBinary::from_f32(&base);
+        let got = knn_asym(&bb, q.row(0), 1);
+        // vec 0 = (0.9,0.1) -> bits (1,1); query (1.0,0.2) set-bit sum = 1.2 (max)
+        assert_eq!(got[0], 0);
+    }
 
     #[test]
     fn binary_rerank_recovers_exact() {
