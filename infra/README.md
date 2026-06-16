@@ -10,29 +10,37 @@ specific CPU, then tearing down. Default: `c8i.2xlarge` (Granite Rapids) in
 cd infra
 npm install
 
-# 1. AWS credentials (CDK needs them; the AWS CLI had none configured)
-aws configure                      # or export AWS_ACCESS_KEY_ID / SECRET
+# AWS credentials. This account uses SSO (IAM Identity Center):
+aws sso login --profile <your-profile>
+export AWS_PROFILE=<your-profile> AWS_REGION=ap-southeast-1
 
-# 2. Register an SSH key pair EC2 can use. Import your EXISTING public key so
-#    you keep using your normal private key (we never touch the private key):
-aws ec2 import-key-pair --key-name vps \
-  --public-key-material fileb://~/.ssh/id_ed25519.pub --region ap-southeast-1
-
-# 3. Bootstrap CDK once per account+region
+# Bootstrap CDK once per account+region
 npx cdk bootstrap
 ```
 
 ## Launch / tear down
 
-```bash
-# launch (prints the public IP + ssh line as stack outputs)
-npx cdk deploy -c keyPairName=vps
+By default the stack **creates a fresh key pair** (`vps-bench`) and stores its
+private key in SSM — you fetch it once; the private key never passes through
+this tool.
 
-# ... run benchmarks over SSH (rsync repo, bash history/run-on-aws.sh) ...
+```bash
+# launch (prints PublicIp + a FetchPrivateKey command as stack outputs)
+npx cdk deploy --require-approval never
+
+# fetch the new private key (command is in the deploy output):
+aws ssm get-parameter --name /ec2/keypair/<id> --with-decryption \
+  --query Parameter.Value --output text --region ap-southeast-1 \
+  > ~/.ssh/vps-bench.pem && chmod 600 ~/.ssh/vps-bench.pem
+
+# ssh:  ssh -i ~/.ssh/vps-bench.pem ec2-user@<PublicIp>
+# ... run benchmarks (rsync repo, bash history/run-on-aws.sh) ...
 
 # DESTROY when done — this is how you keep it cheap
 npx cdk destroy
 ```
+
+To use an **existing** key pair instead of creating one: `-c keyPairName=NAME`.
 
 Useful overrides:
 

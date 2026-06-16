@@ -24,12 +24,21 @@ export class SpotStack extends cdk.Stack {
     const maxSpotPrice: string | undefined = c.tryGetContext('maxSpotPrice');
     const volumeGb = Number(c.tryGetContext('volumeGb') ?? 30);
 
-    if (!keyPairName) {
-      throw new Error(
-        'Set your existing EC2 key pair:  cdk deploy -c keyPairName=YOUR_KEY\n' +
-          '(import your pubkey first if needed:  aws ec2 import-key-pair ' +
-          '--key-name vps --public-key-material fileb://~/.ssh/id_ed25519.pub)',
-      );
+    // Key pair: use an existing one if named, otherwise CREATE a fresh one.
+    // A created key pair's private key is auto-stored in SSM Parameter Store
+    // (SecureString) — fetch it after deploy; we never handle the private key.
+    let keyPair: ec2.IKeyPair;
+    let createdKeyId: string | undefined;
+    if (keyPairName) {
+      keyPair = ec2.KeyPair.fromKeyPairName(this, 'Key', keyPairName);
+    } else {
+      const kp = new ec2.KeyPair(this, 'Key', {
+        keyPairName: 'vps-bench',
+        type: ec2.KeyPairType.ED25519,
+        format: ec2.KeyPairFormat.PEM,
+      });
+      keyPair = kp;
+      createdKeyId = kp.keyPairId;
     }
 
     // Default VPC: public subnets, no NAT gateway → no idle cost.
@@ -51,7 +60,7 @@ export class SpotStack extends cdk.Stack {
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.X86_64,
       }),
-      keyPair: ec2.KeyPair.fromKeyPairName(this, 'Key', keyPairName),
+      keyPair,
       userData,
       blockDevices: [
         {
@@ -85,5 +94,13 @@ export class SpotStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'Ssh', {
       value: `ssh ec2-user@${instance.attrPublicIp}`,
     });
+    if (createdKeyId) {
+      new cdk.CfnOutput(this, 'FetchPrivateKey', {
+        value:
+          `aws ssm get-parameter --name /ec2/keypair/${createdKeyId} ` +
+          `--with-decryption --query Parameter.Value --output text ` +
+          `--region ${this.region} > ~/.ssh/vps-bench.pem && chmod 600 ~/.ssh/vps-bench.pem`,
+      });
+    }
   }
 }
