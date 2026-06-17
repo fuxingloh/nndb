@@ -234,6 +234,86 @@ pub fn binarize_query_rotated(query: &[f32], rot: &Rotation, bits: usize) -> Vec
     binarize_query(&rotated, bits)
 }
 
+/// RaBitQ 1-bit code (Gao & Long, SIGMOD 2024): rotated sign bits + a per-vector
+/// L1 norm of the rotated vector. The unbiased estimate of ⟨q,o⟩ for unit vectors
+/// is ⟨q,code⟩/⟨code,o⟩ = (2·Σ_{set bits} q'_i − Σ q') / ‖o'‖₁, where q' is the
+/// rotated query and the √D from the {±1/√D} codebook cancels. The per-vector
+/// ‖o'‖₁ is what unbiases the estimate vs plain asymmetric scoring.
+pub struct RaBitQ {
+    pub bits: QuantBinary, // rotated sign bits
+    pub norm1: Vec<f32>,   // ‖rotated vector (first `dim` dims)‖₁ per vector
+}
+
+impl RaBitQ {
+    pub fn build(v: &Vectors, rot: &Rotation, bits: usize) -> Self {
+        assert_eq!(rot.dim, v.dim, "rotation dim must match vector dim");
+        let dim = if bits == 0 { v.dim } else { bits.min(v.dim) };
+        let words = dim.div_ceil(64);
+        let n = v.len();
+        let mut data = vec![0u64; n * words];
+        let mut norm1 = vec![0f32; n];
+        data.par_chunks_mut(words)
+            .zip(norm1.par_iter_mut())
+            .enumerate()
+            .for_each(|(i, (out, nrm))| {
+                let mut r = vec![0f32; v.dim];
+                rot.apply_into(v.row(i), &mut r);
+                let mut s = 0f32;
+                for d in 0..dim {
+                    let x = r[d];
+                    s += x.abs();
+                    if x > 0.0 {
+                        out[d / 64] |= 1u64 << (d % 64);
+                    }
+                }
+                *nrm = s.max(1e-12);
+            });
+        RaBitQ { bits: QuantBinary { data, words, dim }, norm1 }
+    }
+}
+
+/// Top-C by the RaBitQ unbiased estimate. `q_rot` is the ROTATED query.
+pub fn knn_rabitq(rb: &RaBitQ, q_rot: &[f32], c: usize) -> Vec<u32> {
+    let dim = rb.bits.dim;
+    let sumq: f32 = q_rot[..dim].iter().sum();
+    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(c + 1);
+    for i in 0..rb.bits.len() {
+        let masked = asym_score(q_rot, rb.bits.row(i)); // Σ q'_i over set bits
+        let est = (2.0 * masked - sumq) / rb.norm1[i];
+        let s = ScoreF(est);
+        if heap.len() < c {
+            heap.push(Reverse((s, i as u32)));
+        } else if s > heap.peek().unwrap().0 .0 {
+            heap.pop();
+            heap.push(Reverse((s, i as u32)));
+        }
+    }
+    heap.into_iter().map(|Reverse((_, i))| i).collect()
+}
+
+/// RaBitQ funnel: rotate query → estimate top-C → exact f32 rerank → top-k.
+pub fn knn_rabitq_rerank_batch(
+    rb: &RaBitQ,
+    fbase: &Vectors,
+    fqueries: &Vectors,
+    rot: &Rotation,
+    k: usize,
+    c: usize,
+) -> Vec<Vec<u32>> {
+    (0..fqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            let qr = rot.apply(fqueries.row(q));
+            let cands = knn_rabitq(rb, &qr, c.max(k));
+            if c == 0 {
+                cands.into_iter().take(k).collect()
+            } else {
+                rerank(fbase, fqueries.row(q), &cands, k)
+            }
+        })
+        .collect()
+}
+
 /// Binarize a single query vector's first `bits` dims into packed sign words
 /// (matches `from_f32_prefix`'s layout). For the serving path, which binarizes
 /// one query at a time. `bits == 0` means full length.
