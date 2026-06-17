@@ -82,6 +82,10 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     query_threads: usize,
 
+    /// Parallelize the rerank rescore in the LATENCY pass (pairs with query-threads).
+    #[arg(long, default_value_t = false)]
+    rerank_par: bool,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -268,6 +272,8 @@ fn main() -> std::io::Result<()> {
                 };
                 if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                     quant::rerank_i8(ib, iq.row(qi), &cands, args.k)
+                } else if args.rerank_par {
+                    quant::rerank_par(&base, queries_all.row(q), &cands, args.k)
                 } else {
                     quant::rerank(&base, queries_all.row(q), &cands, args.k)
                 }

@@ -1,0 +1,13 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "9ffdcd6",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "latency_queries": 300, "query_threads": 8,
+  "note": "Parallel rerank (--rerank-par) in the latency path, paired with query-threads=8. Parallelizing the C rescores cuts p50 ~10% and p99 ~16% (more at higher C, where rerank is a bigger slice). Combined stack (8-shard scan + parallel rerank): single-query p50 2.87ms vs 13ms single-thread baseline (021) = 4.5x. Modest because the scan, not rerank, dominates; the win is mostly tail (p99).",
+  "results": [
+    {"rerank": 1000, "rerank_mode": "serial",   "p50_ms": 3.16, "p95_ms": 4.51, "p99_ms": 4.75},
+    {"rerank": 1000, "rerank_mode": "parallel", "p50_ms": 2.87, "p95_ms": 3.87, "p99_ms": 3.98},
+    {"rerank": 2000, "rerank_mode": "serial",   "p50_ms": 4.38, "p95_ms": 5.62, "p99_ms": 5.88},
+    {"rerank": 2000, "rerank_mode": "parallel", "p50_ms": 3.80, "p95_ms": 4.65, "p99_ms": 4.90}
+  ]
+}

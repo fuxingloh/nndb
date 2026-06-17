@@ -321,6 +321,17 @@ pub fn knn_binary_funnel_i8_batch(
         .collect()
 }
 
+/// Parallel rerank: compute the C candidate L2s across rayon, then serial top-k.
+/// For the single-query latency path, where the C rescores are otherwise serial.
+pub fn rerank_par(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
+    let mut scored: Vec<(f32, u32)> = cands
+        .par_iter()
+        .map(|&c| (crate::search::l2_sq(fquery, fbase.row(c as usize)), c))
+        .collect();
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    scored.into_iter().take(k).map(|(_, i)| i).collect()
+}
+
 /// Binary scan only (no rerank), batched.
 pub fn knn_binary_batch(base: &QuantBinary, queries: &QuantBinary, k: usize) -> Vec<Vec<u32>> {
     (0..queries.len())
