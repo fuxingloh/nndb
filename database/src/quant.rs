@@ -253,6 +253,39 @@ pub fn knn_binary_funnel_tiled(
     results
 }
 
+/// Scan ONE query across `shards` rayon tasks (split the doc range), then merge
+/// the per-shard top-C. Cuts single-query latency ~linearly — the scan is
+/// embarrassingly parallel — at the cost of spending all cores on one request
+/// (a latency-vs-throughput trade; do not use under the serving model). Returns
+/// up to C candidate ids (unordered) for rerank.
+pub fn knn_binary_query_parallel(bbase: &QuantBinary, query: &[u64], c: usize, shards: usize) -> Vec<u32> {
+    let n = bbase.len();
+    let shards = shards.max(1);
+    let chunk = n.div_ceil(shards);
+    let partials: Vec<Vec<(u32, u32)>> = (0..shards)
+        .into_par_iter()
+        .map(|s| {
+            let lo = s * chunk;
+            let hi = ((s + 1) * chunk).min(n);
+            let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::with_capacity(c + 1);
+            for i in lo..hi {
+                let h = hamming(query, bbase.row(i));
+                if heap.len() < c {
+                    heap.push((h, i as u32));
+                } else if h < heap.peek().unwrap().0 {
+                    heap.pop();
+                    heap.push((h, i as u32));
+                }
+            }
+            heap.into_vec()
+        })
+        .collect();
+    // global top-C is contained in the union of shard top-Cs
+    let mut all: Vec<(u32, u32)> = partials.into_iter().flatten().collect();
+    all.sort_unstable();
+    all.into_iter().take(c).map(|(_, i)| i).collect()
+}
+
 /// Rerank candidate ids with int8 dot (max == cosine for unit vectors) → top-k.
 /// 4× smaller rerank store than f32 and 4× less traffic on the random candidate
 /// gather, at a small precision cost vs exact f32 rescoring.

@@ -77,6 +77,11 @@ struct Args {
     #[arg(long, default_value = "f32")]
     rerank_quant: String,
 
+    /// Intra-query parallelism in the LATENCY pass: scan one query across N rayon
+    /// shards (0/1 = single-threaded). Cuts single-query latency; throughput trade.
+    #[arg(long, default_value_t = 0)]
+    query_threads: usize,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -256,7 +261,11 @@ fn main() -> std::io::Result<()> {
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
-                let cands = quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel);
+                let cands = if args.query_threads > 1 {
+                    quant::knn_binary_query_parallel(bb, bq.row(qi), args.rerank.max(args.k), args.query_threads)
+                } else {
+                    quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel)
+                };
                 if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                     quant::rerank_i8(ib, iq.row(qi), &cands, args.k)
                 } else {
