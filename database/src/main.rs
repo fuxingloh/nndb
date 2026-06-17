@@ -91,6 +91,10 @@ struct Args {
     #[arg(long, default_value_t = false)]
     tile_rt: bool,
 
+    /// Software-prefetch upcoming rerank candidate rows (tiled binary path).
+    #[arg(long, default_value_t = false)]
+    rerank_pf: bool,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -209,7 +213,7 @@ fn main() -> std::io::Result<()> {
             if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                 quant::knn_binary_funnel_i8_batch(bb, bq, ib, iq, args.k, args.rerank, bin_sel)
             } else if args.batch > 1 {
-                quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch, args.tile_rt)
+                quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch, args.tile_rt, args.rerank_pf)
             } else {
                 quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
             }

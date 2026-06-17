@@ -212,6 +212,7 @@ pub fn knn_binary_funnel_tiled(
     c: usize,
     tile: usize,
     reg: bool,
+    pf: bool,
 ) -> Vec<Vec<u32>> {
     let nq = bqueries.len();
     let want = if c == 0 { k } else { c.max(k) };
@@ -267,7 +268,11 @@ pub fn knn_binary_funnel_tiled(
                     chunk[j] = v.into_iter().map(|(_, i)| i).collect();
                 } else {
                     let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
-                    chunk[j] = rerank(fbase, fqueries.row(q0 + j), &cands, k);
+                    chunk[j] = if pf {
+                        rerank_pf(fbase, fqueries.row(q0 + j), &cands, k)
+                    } else {
+                        rerank(fbase, fqueries.row(q0 + j), &cands, k)
+                    };
                 }
             }
         });
@@ -340,6 +345,29 @@ pub fn knn_binary_funnel_i8_batch(
             }
         })
         .collect()
+}
+
+/// Rerank with software prefetch of upcoming candidate rows. The candidate gather
+/// is random-access into the 3.9 GB f32 store; prefetching rows PF ahead hides the
+/// initial DRAM latency that the hardware prefetcher (which only streams *within* a
+/// row once touched) can't. x86 only; falls back to plain rerank elsewhere.
+pub fn rerank_pf(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
+    const PF: usize = 8;
+    let mut scored: Vec<(f32, u32)> = Vec::with_capacity(cands.len());
+    for (idx, &c) in cands.iter().enumerate() {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            if let Some(&nc) = cands.get(idx + PF) {
+                use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+                let p = fbase.data.as_ptr().add(nc as usize * fbase.dim) as *const i8;
+                _mm_prefetch(p, _MM_HINT_T0);
+                _mm_prefetch(p.add(64), _MM_HINT_T0);
+            }
+        }
+        scored.push((crate::search::l2_sq(fquery, fbase.row(c as usize)), c));
+    }
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    scored.into_iter().take(k).map(|(_, i)| i).collect()
 }
 
 /// Parallel rerank: compute the C candidate L2s across rayon, then serial top-k.
