@@ -172,6 +172,90 @@ pub fn knn_binary_batch(base: &QuantBinary, queries: &QuantBinary, k: usize) -> 
         .collect()
 }
 
+/// Selection strategy for the binary scan's top-C step.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BinSel {
+    /// Bounded max-heap of size C — O(n log C), branchy.
+    Heap,
+    /// Counting selection on the bounded integer Hamming distance — O(n),
+    /// branch-free histogram + threshold. Candidate order NOT preserved
+    /// (fine for the rerank funnel, which rescores and re-sorts).
+    Count,
+}
+
+/// Top-C smallest Hamming via counting selection. Hamming ∈ [0, dim] is a small
+/// bounded integer, so one histogram pass + a threshold scan selects the C
+/// nearest in O(n) without a comparison heap. Returns up to C ids (unordered —
+/// fine for the rerank funnel, which rescores). Branch-free, so it cuts
+/// single-query latency vs the branchy heap; but it touches an extra `dists`
+/// buffer per query, which costs aggregate bandwidth in the all-cores batch pass.
+pub fn knn_binary_count(base: &QuantBinary, query: &[u64], c: usize) -> Vec<u32> {
+    let n = base.len();
+    let dim = base.dim;
+    let mut dists = vec![0u16; n];
+    let mut counts = vec![0u32; dim + 2];
+    for i in 0..n {
+        let h = hamming(query, base.row(i)) as usize;
+        dists[i] = h as u16;
+        counts[h] += 1;
+    }
+    // smallest threshold t whose cumulative count (through t) reaches C
+    let mut acc = 0u32;
+    let mut t = 0usize;
+    while t <= dim && acc + counts[t] < c as u32 {
+        acc += counts[t];
+        t += 1;
+    }
+    let mut out = Vec::with_capacity(c);
+    for i in 0..n {
+        if (dists[i] as usize) < t {
+            out.push(i as u32);
+        }
+    }
+    if out.len() < c {
+        for i in 0..n {
+            if out.len() >= c {
+                break;
+            }
+            if dists[i] as usize == t {
+                out.push(i as u32);
+            }
+        }
+    }
+    out
+}
+
+#[inline]
+pub fn knn_binary_sel(base: &QuantBinary, query: &[u64], k: usize, sel: BinSel) -> Vec<u32> {
+    match sel {
+        BinSel::Heap => knn_binary(base, query, k),
+        BinSel::Count => knn_binary_count(base, query, k),
+    }
+}
+
+/// Two-stage funnel with a selectable top-C strategy. c=0 → scan top-k only.
+pub fn knn_binary_funnel_batch(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    fbase: &Vectors,
+    fqueries: &Vectors,
+    k: usize,
+    c: usize,
+    sel: BinSel,
+) -> Vec<Vec<u32>> {
+    (0..bqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            if c == 0 {
+                knn_binary_sel(bbase, bqueries.row(q), k, sel)
+            } else {
+                let cands = knn_binary_sel(bbase, bqueries.row(q), c.max(k), sel);
+                rerank(fbase, fqueries.row(q), &cands, k)
+            }
+        })
+        .collect()
+}
+
 /// Two-stage: binary scan → top-`c` candidates → exact f32 rerank → top-k.
 pub fn knn_binary_rerank_batch(
     bbase: &QuantBinary,

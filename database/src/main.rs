@@ -62,6 +62,11 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     rerank: usize,
 
+    /// Binary top-C selection strategy: "heap" (bounded max-heap, O(n log C)) or
+    /// "count" (counting selection on bounded Hamming, O(n)).
+    #[arg(long, default_value = "heap")]
+    select: String,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -157,6 +162,11 @@ fn main() -> std::io::Result<()> {
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
     let bbase = if quant_bin || quant_asym { Some(quant::QuantBinary::from_f32(&base)) } else { None };
     let bquery = if quant_bin { Some(quant::QuantBinary::from_f32(&qps_set)) } else { None };
+    let bin_sel = match args.select.as_str() {
+        "count" => quant::BinSel::Count,
+        "heap" => quant::BinSel::Heap,
+        other => panic!("unknown --select {other:?} (want heap|count)"),
+    };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
@@ -167,11 +177,7 @@ fn main() -> std::io::Result<()> {
             // asymmetric: full-precision query (qps_set) vs binary docs (bbase)
             quant::knn_asym_rerank_batch(bbase.as_ref().unwrap(), &base, &qps_set, args.k, args.rerank)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
-            if args.rerank > 0 {
-                quant::knn_binary_rerank_batch(bb, bq, &base, &qps_set, args.k, args.rerank)
-            } else {
-                quant::knn_binary_batch(bb, bq, args.k)
-            }
+            quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
         } else if args.batch > 1 {
             search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
         } else {
@@ -229,10 +235,10 @@ fn main() -> std::io::Result<()> {
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
-                let cands = quant::knn_binary(bb, bq.row(qi), args.rerank.max(args.k));
+                let cands = quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel);
                 quant::rerank(&base, queries_all.row(q), &cands, args.k)
             } else {
-                quant::knn_binary(bb, bq.row(qi), args.k)
+                quant::knn_binary_sel(bb, bq.row(qi), args.k, bin_sel)
             };
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);

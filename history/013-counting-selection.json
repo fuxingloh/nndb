@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "dafa6dd",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "latency_queries": 200, "reps": 6,
+  "note": "Binary top-C selection: bounded max-heap (O(n log C), branchy) vs counting selection on the bounded integer Hamming distance (O(n), branch-free + 2MB dists buffer/query). Counting LOWERS single-query latency but LOWERS batch QPS (extra per-query bandwidth saturates the all-cores pass). Tradeoff, not a clean win; heap stays default, count is selectable for latency-bound serving.",
+  "results": [
+    {"select": "heap",  "rerank": 0,    "recall_at_10": 0.4681, "qps": 587.1, "p50_ms": 13.87, "p99_ms": 14.31},
+    {"select": "count", "rerank": 0,    "recall_at_10": 0.4681, "qps": 560.7, "p50_ms": 12.61, "p99_ms": 14.67},
+    {"select": "heap",  "rerank": 200,  "recall_at_10": 0.9419, "qps": 584.1, "p50_ms": 14.33, "p99_ms": 15.10},
+    {"select": "count", "rerank": 200,  "recall_at_10": 0.9419, "qps": 548.7, "p50_ms": 12.85, "p99_ms": 14.08},
+    {"select": "heap",  "rerank": 1000, "recall_at_10": 0.9943, "qps": 550.1, "p50_ms": 15.32, "p99_ms": 15.69},
+    {"select": "count", "rerank": 1000, "recall_at_10": 0.9943, "qps": 510.8, "p50_ms": 13.16, "p99_ms": 14.13}
+  ]
+}
