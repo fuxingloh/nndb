@@ -220,6 +220,89 @@ pub fn knn_adsampling_batch(
         .collect()
 }
 
+/// PDX (Kuffo & Boncz, SIGMOD 2025): a **dimension-major** block layout. Vectors
+/// are grouped into blocks of `block`; within a block the data is stored
+/// transposed — all vectors' dim 0, then all vectors' dim 1, … So computing
+/// distances for a whole block is a loop over dimensions whose inner loop is over
+/// vectors (multiple-vectors-at-a-time), which autovectorizes cleanly and needs no
+/// per-vector horizontal reduction. The basis for fast pruned scans (033).
+pub struct PdxBase {
+    data: Vec<f32>,
+    n: usize,
+    dim: usize,
+    block: usize,
+}
+
+impl PdxBase {
+    pub fn from_vectors(v: &Vectors, block: usize) -> Self {
+        let n = v.len();
+        let dim = v.dim;
+        let block = block.max(1);
+        let mut data = vec![0f32; n * dim];
+        let mut off = 0;
+        let mut start = 0;
+        while start < n {
+            let bsz = block.min(n - start);
+            for vi in 0..bsz {
+                let row = v.row(start + vi);
+                for d in 0..dim {
+                    data[off + d * bsz + vi] = row[d];
+                }
+            }
+            off += bsz * dim;
+            start += bsz;
+        }
+        PdxBase { data, n, dim, block }
+    }
+    pub fn len(&self) -> usize {
+        self.n
+    }
+}
+
+/// Exact KNN over the PDX layout — dimension-major, multiple-vectors-at-a-time.
+/// Same result as `knn`; the inner per-dimension loop over the block's vectors
+/// autovectorizes and avoids the horizontal reduction of row-major distance.
+pub fn knn_pdx(pdx: &PdxBase, q: &[f32], k: usize) -> Vec<u32> {
+    let dim = pdx.dim;
+    let mut heap: BinaryHeap<(Dist, u32)> = BinaryHeap::with_capacity(k + 1);
+    let mut partial = vec![0f32; pdx.block];
+    let mut off = 0;
+    let mut start = 0;
+    while start < pdx.n {
+        let bsz = pdx.block.min(pdx.n - start);
+        let part = &mut partial[..bsz];
+        part.iter_mut().for_each(|p| *p = 0.0);
+        for d in 0..dim {
+            let qd = q[d];
+            let col = &pdx.data[off + d * bsz..off + d * bsz + bsz];
+            for v in 0..bsz {
+                let df = qd - col[v];
+                part[v] += df * df;
+            }
+        }
+        for v in 0..bsz {
+            let dd = Dist(part[v]);
+            let idx = (start + v) as u32;
+            if heap.len() < k {
+                heap.push((dd, idx));
+            } else if dd < heap.peek().unwrap().0 {
+                heap.pop();
+                heap.push((dd, idx));
+            }
+        }
+        off += bsz * dim;
+        start += bsz;
+    }
+    heap.into_sorted_vec().into_iter().map(|(_, i)| i).collect()
+}
+
+pub fn knn_pdx_batch(pdx: &PdxBase, queries: &Vectors, k: usize) -> Vec<Vec<u32>> {
+    (0..queries.len())
+        .into_par_iter()
+        .map(|q| knn_pdx(pdx, queries.row(q), k))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +319,19 @@ mod tests {
         let base = vecs(&[&[0.0], &[4.0], &[1.0], &[3.0], &[2.0]]);
         let got = knn(&base, &[0.0], 3);
         assert_eq!(got, vec![0, 2, 4]); // indices of points 0.0, 1.0, 2.0
+    }
+
+    #[test]
+    fn pdx_matches_exact() {
+        let base = vecs(&[
+            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
+            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
+        ]);
+        let q = [0.1, 0.1];
+        let pdx = PdxBase::from_vectors(&base, 3); // 8 rows, block 3 -> 3,3,2
+        for k in 1..=4 {
+            assert_eq!(knn_pdx(&pdx, &q, k), knn(&base, &q, k), "k={k}");
+        }
     }
 
     #[test]

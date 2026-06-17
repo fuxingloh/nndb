@@ -85,6 +85,10 @@ struct Args {
     #[arg(long, default_value_t = 32)]
     delta: usize,
 
+    /// PDX block size (vectors per dimension-major block; only --quant pdx).
+    #[arg(long, default_value_t = 64)]
+    block: usize,
+
     /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
     /// "i8" (int8 dot, ~4x smaller store + gather).
     #[arg(long, default_value = "f32")]
@@ -200,6 +204,7 @@ fn main() -> std::io::Result<()> {
     let quant_asym = args.quant == "asym";
     let quant_rabitq = args.quant == "rabitq";
     let quant_ads = args.quant == "adsampling";
+    let quant_pdx = args.quant == "pdx";
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
@@ -225,6 +230,7 @@ fn main() -> std::io::Result<()> {
     // ADSampling: rotate base + query set so partial distances are unbiased.
     let rbase = if quant_ads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
     let rqps = if quant_ads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
+    let pdx = if quant_pdx { Some(search::PdxBase::from_vectors(&base, args.block)) } else { None };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,
@@ -238,7 +244,9 @@ fn main() -> std::io::Result<()> {
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
     let run = || {
-        if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
+        if let Some(px) = &pdx {
+            search::knn_pdx_batch(px, &qps_set, args.k)
+        } else if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
             search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
         } else if let Some(rb) = &rb {
             quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
@@ -295,7 +303,11 @@ fn main() -> std::io::Result<()> {
     let mut lat_ms: Vec<f64> = Vec::with_capacity(n_lat);
     for q in 0..n_lat {
         let t = Instant::now();
-        if let Some(rb) = &rbase {
+        if let Some(px) = &pdx {
+            let r = search::knn_pdx(px, queries_all.row(q), args.k);
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        } else if let Some(rb) = &rbase {
             let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
             let r = search::knn_adsampling(rb, &qr, args.k, args.eps0, args.delta);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
