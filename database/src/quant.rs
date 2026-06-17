@@ -87,6 +87,73 @@ pub fn knn_i8_batch(base: &QuantI8, queries: &QuantI8, k: usize) -> Vec<Vec<u32>
 // Binary quantization (1 bit/dim = sign) + two-stage rerank.
 // ---------------------------------------------------------------------------
 
+/// In-place fast Walsh–Hadamard transform (len must be a power of two). H/√n is
+/// orthogonal; we skip the 1/√n scale since sign-binarization is scale-invariant.
+fn fwht(a: &mut [f32]) {
+    let n = a.len();
+    let mut h = 1;
+    while h < n {
+        let mut i = 0;
+        while i < n {
+            for j in i..i + h {
+                let x = a[j];
+                let y = a[j + h];
+                a[j] = x + y;
+                a[j + h] = x - y;
+            }
+            i += 2 * h;
+        }
+        h *= 2;
+    }
+}
+
+/// Structured random orthogonal rotation: alternating random ±1 sign-flips and
+/// FWHTs (a fast Johnson–Lindenstrauss transform). This is the RaBitQ/ITQ trick —
+/// rotating before sign-binarization spreads each vector's information evenly
+/// across dimensions so every sign bit carries independent signal, sharply
+/// improving binary-code quality. Deterministic (seeded) so base and query use
+/// the SAME rotation.
+pub struct Rotation {
+    signs: Vec<Vec<f32>>,
+    pub dim: usize,
+}
+
+impl Rotation {
+    pub fn new(dim: usize, rounds: usize, seed: u64) -> Self {
+        assert!(dim.is_power_of_two(), "rotation requires power-of-two dim, got {dim}");
+        let mut s = seed;
+        let mut next = || {
+            // splitmix64
+            s = s.wrapping_add(0x9E3779B97F4A7C15);
+            let mut z = s;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        };
+        let signs = (0..rounds.max(1))
+            .map(|_| (0..dim).map(|_| if next() & 1 == 0 { 1.0f32 } else { -1.0 }).collect())
+            .collect();
+        Rotation { signs, dim }
+    }
+
+    /// Rotate one vector (must be `dim`-long) into `out`.
+    pub fn apply_into(&self, x: &[f32], out: &mut [f32]) {
+        out.copy_from_slice(x);
+        for round in &self.signs {
+            for (o, s) in out.iter_mut().zip(round.iter()) {
+                *o *= *s;
+            }
+            fwht(out);
+        }
+    }
+
+    pub fn apply(&self, x: &[f32]) -> Vec<f32> {
+        let mut out = vec![0.0f32; self.dim];
+        self.apply_into(x, &mut out);
+        out
+    }
+}
+
 /// Sign-bit binary vectors, packed into u64 words. For angular/cosine,
 /// agreement of sign bits approximates similarity → rank by *min* Hamming.
 pub struct QuantBinary {
@@ -132,6 +199,26 @@ impl QuantBinary {
         QuantBinary { data, words, dim }
     }
 
+    /// Like `from_f32_prefix` but applies the random rotation before taking the
+    /// first `bits` sign bits (RaBitQ/ITQ). Rotation runs per row in parallel.
+    pub fn from_f32_rotated(v: &Vectors, rot: &Rotation, bits: usize) -> Self {
+        assert_eq!(rot.dim, v.dim, "rotation dim must match vector dim");
+        let dim = if bits == 0 { v.dim } else { bits.min(v.dim) };
+        let words = dim.div_ceil(64);
+        let n = v.len();
+        let mut data = vec![0u64; n * words];
+        data.par_chunks_mut(words).enumerate().for_each(|(i, out)| {
+            let mut rotated = vec![0f32; v.dim];
+            rot.apply_into(v.row(i), &mut rotated);
+            for d in 0..dim {
+                if rotated[d] > 0.0 {
+                    out[d / 64] |= 1u64 << (d % 64);
+                }
+            }
+        });
+        QuantBinary { data, words, dim }
+    }
+
     #[inline]
     pub fn row(&self, i: usize) -> &[u64] {
         &self.data[i * self.words..(i + 1) * self.words]
@@ -139,6 +226,12 @@ impl QuantBinary {
     pub fn len(&self) -> usize {
         self.data.len() / self.words
     }
+}
+
+/// Binarize one query through the rotation, then take the first `bits` sign words.
+pub fn binarize_query_rotated(query: &[f32], rot: &Rotation, bits: usize) -> Vec<u64> {
+    let rotated = rot.apply(query);
+    binarize_query(&rotated, bits)
 }
 
 /// Binarize a single query vector's first `bits` dims into packed sign words

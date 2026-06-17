@@ -72,6 +72,11 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     scan_bits: usize,
 
+    /// Apply an N-round random rotation (FWHT-based) before sign-binarizing the
+    /// binary codes (RaBitQ/ITQ). 0 = off. Improves binary-code quality.
+    #[arg(long, default_value_t = 0)]
+    rotate: usize,
+
     /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
     /// "i8" (int8 dot, ~4x smaller store + gather).
     #[arg(long, default_value = "f32")]
@@ -189,8 +194,13 @@ fn main() -> std::io::Result<()> {
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
     let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
-    let bbase = if quant_bin || quant_asym { Some(quant::QuantBinary::from_f32_prefix(&base, bits)) } else { None };
-    let bquery = if quant_bin { Some(quant::QuantBinary::from_f32_prefix(&qps_set, bits)) } else { None };
+    let rot = if args.rotate > 0 { Some(quant::Rotation::new(base.dim, args.rotate, 0x5EED)) } else { None };
+    let mk = |v: &fvecs::Vectors| match &rot {
+        Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
+        None => quant::QuantBinary::from_f32_prefix(v, bits),
+    };
+    let bbase = if quant_bin || quant_asym { Some(mk(&base)) } else { None };
+    let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,

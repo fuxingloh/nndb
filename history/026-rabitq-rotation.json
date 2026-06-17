@@ -1,0 +1,19 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "1e2fade",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "reps": 4,
+  "research": "RaBitQ (Gao & Long, SIGMOD 2024, arXiv:2405.12497) + ITQ (Gong & Lazebnik 2011). Core idea tested: a random orthogonal rotation before sign-binarization spreads each vector's info evenly across dims so every bit carries independent signal -> better binary codes. Implemented as a fast FWHT-based structured rotation (random sign-flip + Walsh-Hadamard, deterministic seed, same for base+query).",
+  "note": "Rotation improves binary recall at every C with ZERO QPS cost (rotation is prep-time + a tiny per-query FWHT; scan is identical Hamming). Win is biggest at low C (stage-1 +2.4pts) -> reach target recall at smaller C -> faster funnel. 2 rounds suffice (rot x3 ~= x2). Modest on Cohere (already well-conditioned/compression-aware); larger on raw embeddings.",
+  "results": [
+    {"rotate": 0, "rerank": 0,    "recall_at_10": 0.4681, "qps": 581.8},
+    {"rotate": 2, "rerank": 0,    "recall_at_10": 0.4925, "qps": 584.9},
+    {"rotate": 3, "rerank": 0,    "recall_at_10": 0.4937, "qps": 577.7},
+    {"rotate": 0, "rerank": 100,  "recall_at_10": 0.8865, "qps": 572.5},
+    {"rotate": 2, "rerank": 100,  "recall_at_10": 0.9118, "qps": 573.3},
+    {"rotate": 0, "rerank": 500,  "recall_at_10": 0.9826, "qps": 543.3},
+    {"rotate": 2, "rerank": 500,  "recall_at_10": 0.9891, "qps": 541.0},
+    {"rotate": 0, "rerank": 1000, "recall_at_10": 0.9943, "qps": 516.4},
+    {"rotate": 2, "rerank": 1000, "recall_at_10": 0.9970, "qps": 514.3}
+  ]
+}
