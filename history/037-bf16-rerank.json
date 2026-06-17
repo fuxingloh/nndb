@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "5eacb93",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 4, "rotate": 2, "tile": 16,
+  "note": "NEGATIVE for the Pareto goal. bf16 rerank store (top 16 bits of f32, query kept full precision) to halve the rerank random-gather bandwidth. No QPS gain (+1.4% @C=1000, -1% @C=2000, -3.4% @C=4000) AND recall drops ~0.4pts (0.9990->0.9945 @C=2000). Why: the per-element bf16->f32 decode (shift) offsets the halved bytes, and the binary scan is still the larger share of the tiled funnel; the 7-bit mantissa costs recall. Net: sacrifices recall for ~no speed. (It IS a memory win: rerank store 3.9GB->1.95GB.)",
+  "results": [
+    {"rerank": 1000, "store": "f32",  "recall_at_10": 0.9960, "qps": 849.4, "p50_ms": 11.10},
+    {"rerank": 1000, "store": "bf16", "recall_at_10": 0.9918, "qps": 861.7, "p50_ms": 11.29},
+    {"rerank": 2000, "store": "f32",  "recall_at_10": 0.9990, "qps": 735.2, "p50_ms": 12.63},
+    {"rerank": 2000, "store": "bf16", "recall_at_10": 0.9945, "qps": 728.1, "p50_ms": 13.34},
+    {"rerank": 4000, "store": "f32",  "recall_at_10": 0.9998, "qps": 579.7, "p50_ms": 15.47},
+    {"rerank": 4000, "store": "bf16", "recall_at_10": 0.9953, "qps": 559.8, "p50_ms": 15.45}
+  ]
+}

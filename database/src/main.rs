@@ -89,6 +89,11 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     block: usize,
 
+    /// Rerank doc store width for the binary funnel: "f32" or "bf16" (half the
+    /// gather bandwidth, query kept full precision).
+    #[arg(long, default_value = "f32")]
+    rerank_store: String,
+
     /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
     /// "i8" (int8 dot, ~4x smaller store + gather).
     #[arg(long, default_value = "f32")]
@@ -251,6 +256,7 @@ fn main() -> std::io::Result<()> {
     let rr_i8 = quant_bin && args.rerank > 0 && args.rerank_quant == "i8";
     let i8b = if rr_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let i8q = if rr_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
+    let bf16base = if quant_bin && args.rerank_store == "bf16" { Some(quant::Bf16Vectors::from_f32(&base)) } else { None };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
@@ -275,7 +281,9 @@ fn main() -> std::io::Result<()> {
             // asymmetric: full-precision query (qps_set) vs binary docs (bbase)
             quant::knn_asym_rerank_batch(bbase.as_ref().unwrap(), &base, &qps_set, args.k, args.rerank)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
-            if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
+            if let Some(bf) = &bf16base {
+                quant::knn_binary_funnel_tiled_bf16(bb, bq, bf, &qps_set, args.k, args.rerank, args.batch)
+            } else if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                 quant::knn_binary_funnel_i8_batch(bb, bq, ib, iq, args.k, args.rerank, bin_sel)
             } else if args.batch > 1 {
                 quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch, args.tile_rt, args.rerank_pf)
@@ -375,7 +383,9 @@ fn main() -> std::io::Result<()> {
                 } else {
                     quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel)
                 };
-                if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
+                if let Some(bf) = &bf16base {
+                    quant::rerank_bf16(bf, queries_all.row(q), &cands, args.k)
+                } else if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                     quant::rerank_i8(ib, iq.row(qi), &cands, args.k)
                 } else if args.rerank_par {
                     quant::rerank_par(&base, queries_all.row(q), &cands, args.k)

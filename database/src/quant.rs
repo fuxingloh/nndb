@@ -613,6 +613,100 @@ pub fn rerank_adsampling(
     v.into_iter().map(|(_, i)| i).collect()
 }
 
+/// bf16 (brain-float16) view of a vector set for the rerank tier: the top 16 bits
+/// of each f32 (8-bit exponent kept, mantissa truncated to 7 bits). Halves the
+/// rerank gather bandwidth — which is the tiled funnel's binding cost — at
+/// negligible precision loss (the query stays full-precision: asymmetric rerank).
+pub struct Bf16Vectors {
+    data: Vec<u16>,
+    dim: usize,
+}
+impl Bf16Vectors {
+    pub fn from_f32(v: &Vectors) -> Self {
+        let data = v.data.iter().map(|&x| (x.to_bits() >> 16) as u16).collect();
+        Bf16Vectors { data, dim: v.dim }
+    }
+    #[inline]
+    fn row(&self, i: usize) -> &[u16] {
+        &self.data[i * self.dim..(i + 1) * self.dim]
+    }
+}
+
+#[inline]
+fn bf16_to_f32(x: u16) -> f32 {
+    f32::from_bits((x as u32) << 16)
+}
+
+/// Rerank candidates against a bf16 doc store (query full precision). L2 == cosine
+/// for unit vectors; bf16 decode is a shift, so the inner loop still vectorizes.
+pub fn rerank_bf16(bf: &Bf16Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
+    let dim = bf.dim;
+    let mut scored: Vec<(f32, u32)> = cands
+        .iter()
+        .map(|&c| {
+            let row = bf.row(c as usize);
+            let mut s = 0f32;
+            for j in 0..dim {
+                let d = fquery[j] - bf16_to_f32(row[j]);
+                s += d * d;
+            }
+            (s, c)
+        })
+        .collect();
+    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    scored.into_iter().take(k).map(|(_, i)| i).collect()
+}
+
+/// Tiled binary scan (016) + bf16 rerank (037): same scan, half-width rerank store.
+pub fn knn_binary_funnel_tiled_bf16(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    bf: &Bf16Vectors,
+    fqueries: &Vectors,
+    k: usize,
+    c: usize,
+    tile: usize,
+) -> Vec<Vec<u32>> {
+    let nq = bqueries.len();
+    let want = if c == 0 { k } else { c.max(k) };
+    let n = bbase.len();
+    let tile = tile.max(1);
+    let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
+    results
+        .par_chunks_mut(tile)
+        .enumerate()
+        .for_each(|(ci, chunk)| {
+            let q0 = ci * tile;
+            let t = chunk.len();
+            let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
+            let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
+                (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
+            for i in 0..n {
+                let doc = bbase.row(i);
+                for j in 0..t {
+                    let h = hamming(qrows[j], doc);
+                    let hp = &mut heaps[j];
+                    if hp.len() < want {
+                        hp.push((h, i as u32));
+                    } else if h < hp.peek().unwrap().0 {
+                        hp.pop();
+                        hp.push((h, i as u32));
+                    }
+                }
+            }
+            for j in 0..t {
+                let heap = std::mem::take(&mut heaps[j]);
+                let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
+                chunk[j] = if c == 0 {
+                    cands.into_iter().take(k).collect()
+                } else {
+                    rerank_bf16(bf, fqueries.row(q0 + j), &cands, k)
+                };
+            }
+        });
+    results
+}
+
 /// Tiled binary scan (016) + ADSampling-pruned rerank (034) combined. The two
 /// optimizations are orthogonal — tiling amortizes scan bandwidth across a query
 /// tile, ADSampling trims the rerank — so stacking them should lift QPS at no
