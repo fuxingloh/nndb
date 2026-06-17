@@ -184,6 +184,60 @@ pub fn rerank(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u
     scored.into_iter().take(k).map(|(_, i)| i).collect()
 }
 
+/// Tiled binary funnel: each doc is loaded once and compared against a tile of
+/// `tile` queries before moving on, so the 122 MB binary base streams once per
+/// tile instead of once per query — cutting base bandwidth ~tile× on a memory-
+/// bound box. Heap selection + f32 rerank; respects prefix bbase (scan-bits).
+pub fn knn_binary_funnel_tiled(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    fbase: &Vectors,
+    fqueries: &Vectors,
+    k: usize,
+    c: usize,
+    tile: usize,
+) -> Vec<Vec<u32>> {
+    let nq = bqueries.len();
+    let want = if c == 0 { k } else { c.max(k) };
+    let n = bbase.len();
+    let tile = tile.max(1);
+    let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
+    results
+        .par_chunks_mut(tile)
+        .enumerate()
+        .for_each(|(ci, chunk)| {
+            let q0 = ci * tile;
+            let t = chunk.len();
+            let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
+                (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
+            for i in 0..n {
+                let doc = bbase.row(i);
+                for j in 0..t {
+                    let h = hamming(bqueries.row(q0 + j), doc);
+                    let hp = &mut heaps[j];
+                    if hp.len() < want {
+                        hp.push((h, i as u32));
+                    } else if h < hp.peek().unwrap().0 {
+                        hp.pop();
+                        hp.push((h, i as u32));
+                    }
+                }
+            }
+            for j in 0..t {
+                let heap = std::mem::take(&mut heaps[j]);
+                if c == 0 {
+                    let mut v = heap.into_vec();
+                    v.sort_unstable();
+                    chunk[j] = v.into_iter().map(|(_, i)| i).collect();
+                } else {
+                    let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
+                    chunk[j] = rerank(fbase, fqueries.row(q0 + j), &cands, k);
+                }
+            }
+        });
+    results
+}
+
 /// Rerank candidate ids with int8 dot (max == cosine for unit vectors) → top-k.
 /// 4× smaller rerank store than f32 and 4× less traffic on the random candidate
 /// gather, at a small precision cost vs exact f32 rescoring.

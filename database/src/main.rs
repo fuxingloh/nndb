@@ -194,6 +194,8 @@ fn main() -> std::io::Result<()> {
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
                 quant::knn_binary_funnel_i8_batch(bb, bq, ib, iq, args.k, args.rerank, bin_sel)
+            } else if args.batch > 1 {
+                quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch)
             } else {
                 quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
             }

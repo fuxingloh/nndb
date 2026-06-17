@@ -1,0 +1,16 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "28c946b",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "latency_queries": 50, "reps": 6,
+  "note": "Tiled binary scan (--batch T): each doc loaded once, compared against a tile of T queries, so the 122MB binary base streams once per tile instead of per query. Pure bandwidth win on the memory-bound box; recall IDENTICAL (exact-equivalent reordering). +73% QPS at tile=8 (485->838), saturates ~tile=16-32 (scan re-prices toward compute-bound). Composes with prefix scan-bits. Rerank=1000 f32.",
+  "results": [
+    {"tile": 1,  "scan_bits": 1024, "recall_at_10": 0.9931, "qps": 485.4},
+    {"tile": 4,  "scan_bits": 1024, "recall_at_10": 0.9931, "qps": 797.3},
+    {"tile": 8,  "scan_bits": 1024, "recall_at_10": 0.9931, "qps": 837.9},
+    {"tile": 16, "scan_bits": 1024, "recall_at_10": 0.9931, "qps": 849.5},
+    {"tile": 32, "scan_bits": 1024, "recall_at_10": 0.9931, "qps": 857.6},
+    {"tile": 8,  "scan_bits": 512,  "recall_at_10": 0.8842, "qps": 957.5},
+    {"tile": 16, "scan_bits": 512,  "recall_at_10": 0.8842, "qps": 983.9}
+  ]
+}
