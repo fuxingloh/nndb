@@ -613,6 +613,62 @@ pub fn rerank_adsampling(
     v.into_iter().map(|(_, i)| i).collect()
 }
 
+/// Tiled binary scan (016) + ADSampling-pruned rerank (034) combined. The two
+/// optimizations are orthogonal — tiling amortizes scan bandwidth across a query
+/// tile, ADSampling trims the rerank — so stacking them should lift QPS at no
+/// recall cost (with eps0 conservative). bqueries=rotated binary; rfbase/rqueries
+/// =rotated f32.
+pub fn knn_binary_funnel_tiled_ads(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    rfbase: &Vectors,
+    rqueries: &Vectors,
+    k: usize,
+    c: usize,
+    tile: usize,
+    eps0: f32,
+    delta: usize,
+) -> Vec<Vec<u32>> {
+    let nq = bqueries.len();
+    let want = if c == 0 { k } else { c.max(k) };
+    let n = bbase.len();
+    let tile = tile.max(1);
+    let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
+    results
+        .par_chunks_mut(tile)
+        .enumerate()
+        .for_each(|(ci, chunk)| {
+            let q0 = ci * tile;
+            let t = chunk.len();
+            let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
+            let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
+                (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
+            for i in 0..n {
+                let doc = bbase.row(i);
+                for j in 0..t {
+                    let h = hamming(qrows[j], doc);
+                    let hp = &mut heaps[j];
+                    if hp.len() < want {
+                        hp.push((h, i as u32));
+                    } else if h < hp.peek().unwrap().0 {
+                        hp.pop();
+                        hp.push((h, i as u32));
+                    }
+                }
+            }
+            for j in 0..t {
+                let heap = std::mem::take(&mut heaps[j]);
+                let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
+                chunk[j] = if c == 0 {
+                    cands.into_iter().take(k).collect()
+                } else {
+                    rerank_adsampling(rfbase, rqueries.row(q0 + j), &cands, k, eps0, delta)
+                };
+            }
+        });
+    results
+}
+
 /// Binary funnel with an ADSampling-pruned rerank tier (rotated). bqueries are
 /// rotated binary codes; rqueries/rfbase are rotated f32 for the rerank.
 pub fn knn_binary_funnel_ads_batch(

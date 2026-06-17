@@ -262,7 +262,11 @@ fn main() -> std::io::Result<()> {
         } else if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
             search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
         } else if let (Some(bb), Some(bq), Some(rf), Some(rqf)) = (&bbase, &bquery, &rfbase, &rqps_f) {
-            quant::knn_binary_funnel_ads_batch(bb, bq, rf, rqf, args.k, args.rerank, args.eps0, args.delta)
+            if args.batch > 1 {
+                quant::knn_binary_funnel_tiled_ads(bb, bq, rf, rqf, args.k, args.rerank, args.batch, args.eps0, args.delta)
+            } else {
+                quant::knn_binary_funnel_ads_batch(bb, bq, rf, rqf, args.k, args.rerank, args.eps0, args.delta)
+            }
         } else if let Some(rb) = &rb {
             quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
         } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {

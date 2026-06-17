@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "75de775",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 4, "rotate": 2, "tile": 16,
+  "note": "NEGATIVE for the Pareto goal. Combined tiling (016) + ADSampling rerank (034) on the rotated binary funnel. Recall identical (lossless), latency marginally better, but batch QPS DROPS 5-8% (735->687 @C=2000, 579->532 @C=4000). Reason (023 lesson): once tiling makes the scan cheap, rerank dominates, and plain l2_sq rerank is a tight autovectorized loop - ADSampling's batched early-exit branching defeats that vectorization, and the pruned-dims saving doesn't repay it. ADS rerank only helped UNTILED (034) where the scan still dominated. Conclusion: rerank is now random-gather BANDWIDTH-bound, not compute-bound -> the right lever is fewer gather BYTES (bf16), not fewer flops (037).",
+  "results": [
+    {"rerank": 2000, "mode": "tiled plain",        "recall_at_10": 0.9990, "qps": 735.1, "p50_ms": 12.49},
+    {"rerank": 2000, "mode": "tiled ads eps0=3.0",  "recall_at_10": 0.9990, "qps": 687.3, "p50_ms": 12.46},
+    {"rerank": 2000, "mode": "tiled ads eps0=2.5",  "recall_at_10": 0.9990, "qps": 705.1, "p50_ms": 11.95},
+    {"rerank": 4000, "mode": "tiled plain",        "recall_at_10": 0.9998, "qps": 578.9, "p50_ms": 15.69},
+    {"rerank": 4000, "mode": "tiled ads eps0=3.0",  "recall_at_10": 0.9998, "qps": 532.0, "p50_ms": 14.58},
+    {"rerank": 4000, "mode": "tiled ads eps0=2.5",  "recall_at_10": 0.9998, "qps": 549.6, "p50_ms": 14.53}
+  ]
+}
