@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "b8b6749",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 4000, "reps": "5-8", "rotate": 2, "rerank": 1000,
+  "note": "CLEAN PARETO WIN. Tile-size re-tuning on the rotated binary winner. Recall IDENTICAL across all tiles (exact-equivalent reordering) and single-query latency is tile-independent, so any QPS gain costs nothing. tile=8 = 921.6 QPS vs the previously-defaulted tile=16 = 857.4 -> +7.5% QPS, zero recall/latency cost. tile=16 is a REPRODUCIBLE local dip (CV<0.2%, confirmed reps=8) - a microarch cache resonance; tile=8 best, tile=32 (907) also beats it. New project-best high-recall throughput point: 0.9968 @ 922 (beats 030's tile=16 0.996 @ 845). Lesson: the default tile (16) was accidentally on a bad spot; the engine had ~7-9% free QPS the whole time.",
+  "results": [
+    {"tile": 8,   "recall_at_10": 0.9968, "qps": 921.6, "reps": 8},
+    {"tile": 16,  "recall_at_10": 0.9968, "qps": 857.4, "reps": 8},
+    {"tile": 24,  "recall_at_10": 0.9968, "qps": 898.2, "reps": 5},
+    {"tile": 32,  "recall_at_10": 0.9968, "qps": 907.1, "reps": 8},
+    {"tile": 48,  "recall_at_10": 0.9968, "qps": 899.4, "reps": 5},
+    {"tile": 64,  "recall_at_10": 0.9968, "qps": 895.2, "reps": 5},
+    {"tile": 96,  "recall_at_10": 0.9968, "qps": 823.5, "reps": 5},
+    {"tile": 128, "recall_at_10": 0.9968, "qps": 826.3, "reps": 5}
+  ]
+}
