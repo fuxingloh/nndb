@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "e70d04b",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 6, "tile": 16,
+  "note": "Combined recall-vs-QPS Pareto with all batch levers composed: tiling (016) x prefix scan-bits (014) x rerank C, on the binary funnel. Tiling is the universal lever (no recall cost); prefix only helps BELOW ~0.97 recall (at high recall, full scan + tiling wins because recovering recall needs so much C that truncation loses). Best high-recall point 1024/C=1000 = 0.993 @ 850 QPS; highest recall 1024/C=2000 = 0.9975 @ 731. Both beat original 009 (0.994 @ 585) on recall AND throughput.",
+  "results": [
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.9931, "qps": 850.2, "pareto": true},
+    {"scan_bits": 1024, "rerank": 2000, "recall_at_10": 0.9975, "qps": 730.6, "pareto": true},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.9703, "qps": 892.6, "pareto": true},
+    {"scan_bits": 768,  "rerank": 2000, "recall_at_10": 0.9864, "qps": 762.4, "pareto": false},
+    {"scan_bits": 768,  "rerank": 4000, "recall_at_10": 0.9947, "qps": 587.8, "pareto": false},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.9303, "qps": 828.6, "pareto": true},
+    {"scan_bits": 512,  "rerank": 4000, "recall_at_10": 0.9601, "qps": 625.9, "pareto": false},
+    {"scan_bits": 384,  "rerank": 4000, "recall_at_10": 0.8999, "qps": 598.7, "pareto": false}
+  ]
+}
