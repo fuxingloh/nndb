@@ -1,0 +1,18 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "47f74d6",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "transport": "http", "k": 10, "requests": 400, "warmup": 40, "max_concurrency": 8,
+  "note": "Serving latency/throughput knob via prefix scan-bits (recall from 018). Under load (conc=cores) prefix lifts serving QPS +36% (768) to +57% (512) and cuts client p50 17->10.7ms, trading recall 0.993->0.93. At c=1 (no contention) 768 barely helps (rerank C dominates the small scan saving); the prefix's win is mostly relieving AGGREGATE bandwidth under concurrent load. 512 halves the scan enough to help even single-query (compute 11.4->7.9ms).",
+  "sweep": [
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.993, "concurrency": 1,  "qps": 84.2,  "client_p50_ms": 11.86, "server_compute_p50_ms": 11.43},
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.993, "concurrency": 8,  "qps": 465.4, "client_p50_ms": 17.12, "server_compute_p50_ms": 16.71},
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.993, "concurrency": 16, "qps": 479.5, "client_p50_ms": 32.40, "server_compute_p50_ms": 16.21},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.970, "concurrency": 1,  "qps": 90.7,  "client_p50_ms": 11.48, "server_compute_p50_ms": 11.10},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.970, "concurrency": 8,  "qps": 633.6, "client_p50_ms": 12.31, "server_compute_p50_ms": 11.83},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.970, "concurrency": 16, "qps": 603.9, "client_p50_ms": 26.54, "server_compute_p50_ms": 12.97},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.930, "concurrency": 1,  "qps": 118.4, "client_p50_ms": 8.35,  "server_compute_p50_ms": 7.93},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.930, "concurrency": 8,  "qps": 732.4, "client_p50_ms": 10.71, "server_compute_p50_ms": 10.35},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.930, "concurrency": 16, "qps": 754.7, "client_p50_ms": 20.25, "server_compute_p50_ms": 9.69}
+  ]
+}
