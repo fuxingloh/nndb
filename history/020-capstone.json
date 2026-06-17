@@ -1,0 +1,22 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "8a4ae39",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 8,
+  "note": "Capstone head-to-head, same run. 009 baseline (tile=1, full, C=1000) vs best 2026 config. Tiling lifts batch QPS +76% at IDENTICAL recall (485->851 @ 0.993); best-recall config reaches 0.9975 @ 730 (+51% QPS AND higher recall than baseline). Latency p50 unchanged by tiling (batch lever). Summary of the 012-020 perf effort below.",
+  "head_to_head": [
+    {"config": "009 baseline (tile=1, full-1024, C=1000)", "recall_at_10": 0.9931, "qps": 484.8, "p50_ms": 11.84, "p99_ms": 12.25},
+    {"config": "best-throughput (tile=16, full-1024, C=1000)", "recall_at_10": 0.9931, "qps": 851.3, "p50_ms": 12.06, "p99_ms": 12.61},
+    {"config": "best-recall (tile=16, full-1024, C=2000)", "recall_at_10": 0.9975, "qps": 730.2, "p50_ms": 13.88, "p99_ms": 14.29}
+  ],
+  "levers": [
+    {"entry": "012", "lever": "multi-accumulator hamming", "verdict": "negative: popcount autovectorizes (VPOPCNTDQ/CNT); manual split ~2.2x slower; reverted"},
+    {"entry": "013", "lever": "counting selection (vs heap)", "verdict": "latency knob: -14% single-query, -6% batch QPS; heap default, count for serving"},
+    {"entry": "014", "lever": "prefix/truncated scan", "verdict": "recall<->QPS knob: 512-bit ~2x scan QPS; bandwidth-bound confirmed"},
+    {"entry": "015", "lever": "int8 rerank tier", "verdict": "memory only (4x smaller store); no QPS gain, -1.5 recall pts; rerank not bottleneck"},
+    {"entry": "016", "lever": "tiled binary scan", "verdict": "BIGGEST WIN: +73% QPS, identical recall (amortizes base bandwidth)"},
+    {"entry": "017", "lever": "serve the funnel", "verdict": "binary+rerank 462 QPS @ 17ms vs f32 9.3 QPS @ 858ms (~50x end-to-end)"},
+    {"entry": "018", "lever": "combined Pareto", "verdict": "tiling universal, prefix only below ~0.97; best 0.9975@731 / 0.993@850"},
+    {"entry": "019", "lever": "serving prefix knob", "verdict": "+36% (768) / +57% (512) serving QPS under load, p50 17->11ms, trade recall"}
+  ]
+}
