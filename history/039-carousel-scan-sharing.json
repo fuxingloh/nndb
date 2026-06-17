@@ -1,0 +1,20 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "3346097",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "rerank": 1000, "seats": 8, "chunk": 4096, "workers": 8,
+  "idea": "User's 'carousel': real traffic is bursty, so fixed query-tiling either waits to fill a tile (latency) or scans partial tiles (wasted bandwidth). Instead keep each worker continuously cycling the base; an arriving query attaches at the current cursor, rides one full revolution (sees all N docs), leaves with top-C. Each doc read is shared by everyone aboard = dynamic tiling with tile=in-flight count. Classic scan-sharing (Crescando/Blink). New bin src/bin/carousel.rs; self-contained Poisson-arrival benchmark.",
+  "note": "Carousel (8 independent full-base carousels, seats=8) vs per-query (017 model), bursty Poisson load. Per-query: ~12ms p50 until ~500 QPS capacity, then LATENCY CLIFF (533ms@600, 2045ms@800 - queue explodes). Carousel: NO cliff, ~30-35ms p50 / ~60ms p99 FLAT across 400-800 QPS, and higher sustained capacity (scan-sharing). Trade: higher latency FLOOR at low load (77ms@100 vs 12ms). Idea CONFIRMED for bursty/overload (the intended scenario): bounded latency + graceful degradation + no cliff. Weakness = low-load floor (one full revolution); next: shard docs across workers to cut revolution ~8x (040).",
+  "results": [
+    {"mode": "perquery", "rate": 100, "throughput": 96.8,  "p50_ms": 12.50, "p99_ms": 16.18},
+    {"mode": "perquery", "rate": 200, "throughput": 189.3, "p50_ms": 11.46, "p99_ms": 16.14},
+    {"mode": "perquery", "rate": 400, "throughput": 384.2, "p50_ms": 11.78, "p99_ms": 20.60},
+    {"mode": "perquery", "rate": 600, "throughput": 574.0, "p50_ms": 533.16, "p99_ms": 909.77},
+    {"mode": "perquery", "rate": 800, "throughput": 752.5, "p50_ms": 2045.46, "p99_ms": 3366.87},
+    {"mode": "carousel", "rate": 100, "throughput": 96.8,  "p50_ms": 77.41, "p99_ms": 171.88},
+    {"mode": "carousel", "rate": 200, "throughput": 189.7, "p50_ms": 44.69, "p99_ms": 104.22},
+    {"mode": "carousel", "rate": 400, "throughput": 385.2, "p50_ms": 31.78, "p99_ms": 63.32},
+    {"mode": "carousel", "rate": 600, "throughput": 574.2, "p50_ms": 30.33, "p99_ms": 61.24},
+    {"mode": "carousel", "rate": 800, "throughput": 753.8, "p50_ms": 35.46, "p99_ms": 59.04}
+  ]
+}
