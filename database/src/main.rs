@@ -72,6 +72,11 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     scan_bits: usize,
 
+    /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
+    /// "i8" (int8 dot, ~4x smaller store + gather).
+    #[arg(long, default_value = "f32")]
+    rerank_quant: String,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -173,6 +178,10 @@ fn main() -> std::io::Result<()> {
         "heap" => quant::BinSel::Heap,
         other => panic!("unknown --select {other:?} (want heap|count)"),
     };
+    // Optional int8 rerank tier for the binary funnel (4x smaller than f32).
+    let rr_i8 = quant_bin && args.rerank > 0 && args.rerank_quant == "i8";
+    let i8b = if rr_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
+    let i8q = if rr_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
@@ -183,7 +192,11 @@ fn main() -> std::io::Result<()> {
             // asymmetric: full-precision query (qps_set) vs binary docs (bbase)
             quant::knn_asym_rerank_batch(bbase.as_ref().unwrap(), &base, &qps_set, args.k, args.rerank)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
-            quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
+            if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
+                quant::knn_binary_funnel_i8_batch(bb, bq, ib, iq, args.k, args.rerank, bin_sel)
+            } else {
+                quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
+            }
         } else if args.batch > 1 {
             search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
         } else {
@@ -242,7 +255,11 @@ fn main() -> std::io::Result<()> {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
                 let cands = quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel);
-                quant::rerank(&base, queries_all.row(q), &cands, args.k)
+                if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
+                    quant::rerank_i8(ib, iq.row(qi), &cands, args.k)
+                } else {
+                    quant::rerank(&base, queries_all.row(q), &cands, args.k)
+                }
             } else {
                 quant::knn_binary_sel(bb, bq.row(qi), args.k, bin_sel)
             };

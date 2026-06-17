@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "a85ea23",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "latency_queries": 200, "reps": 6,
+  "note": "int8 rerank tier vs f32 rerank for the binary funnel (--rerank-quant). No QPS gain (rerank is not the bottleneck; the scan is, per 014). Marginal latency drop. Costs ~1.5 recall points (int8 rescoring less precise than f32). Only benefit is memory: rerank store 3.9GB -> 977MB (4x). A memory lever, not a speed lever.",
+  "results": [
+    {"rerank": 500,  "rerank_quant": "f32", "recall_at_10": 0.9826, "qps": 431.3, "p50_ms": 15.22},
+    {"rerank": 500,  "rerank_quant": "i8",  "recall_at_10": 0.9686, "qps": 428.8, "p50_ms": 15.19},
+    {"rerank": 1000, "rerank_quant": "f32", "recall_at_10": 0.9943, "qps": 420.0, "p50_ms": 15.92},
+    {"rerank": 1000, "rerank_quant": "i8",  "recall_at_10": 0.9783, "qps": 419.6, "p50_ms": 15.72},
+    {"rerank": 2000, "rerank_quant": "f32", "recall_at_10": 0.9986, "qps": 397.8, "p50_ms": 17.01},
+    {"rerank": 2000, "rerank_quant": "i8",  "recall_at_10": 0.9819, "qps": 395.0, "p50_ms": 16.44}
+  ]
+}

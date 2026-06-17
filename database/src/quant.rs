@@ -184,6 +184,41 @@ pub fn rerank(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u
     scored.into_iter().take(k).map(|(_, i)| i).collect()
 }
 
+/// Rerank candidate ids with int8 dot (max == cosine for unit vectors) → top-k.
+/// 4× smaller rerank store than f32 and 4× less traffic on the random candidate
+/// gather, at a small precision cost vs exact f32 rescoring.
+pub fn rerank_i8(i8base: &QuantI8, query: &[i8], cands: &[u32], k: usize) -> Vec<u32> {
+    let mut scored: Vec<(i32, u32)> = cands
+        .iter()
+        .map(|&c| (dot_i8(query, i8base.row(c as usize)), c))
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0)); // descending dot
+    scored.into_iter().take(k).map(|(_, i)| i).collect()
+}
+
+/// Two-stage funnel with an int8 rerank tier (instead of f32). c=0 → scan only.
+pub fn knn_binary_funnel_i8_batch(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    i8base: &QuantI8,
+    i8queries: &QuantI8,
+    k: usize,
+    c: usize,
+    sel: BinSel,
+) -> Vec<Vec<u32>> {
+    (0..bqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            if c == 0 {
+                knn_binary_sel(bbase, bqueries.row(q), k, sel)
+            } else {
+                let cands = knn_binary_sel(bbase, bqueries.row(q), c.max(k), sel);
+                rerank_i8(i8base, i8queries.row(q), &cands, k)
+            }
+        })
+        .collect()
+}
+
 /// Binary scan only (no rerank), batched.
 pub fn knn_binary_batch(base: &QuantBinary, queries: &QuantBinary, k: usize) -> Vec<Vec<u32>> {
     (0..queries.len())
