@@ -154,6 +154,18 @@ impl Rotation {
     }
 }
 
+/// Apply the rotation to every row of a vector set (parallel), returning a new
+/// rotated `Vectors`. Used by ADSampling, which needs random-rotated inputs.
+pub fn rotate_vectors(v: &Vectors, rot: &Rotation) -> Vectors {
+    assert_eq!(rot.dim, v.dim, "rotation dim must match vector dim");
+    let dim = v.dim;
+    let mut data = vec![0f32; v.data.len()];
+    data.par_chunks_mut(dim)
+        .enumerate()
+        .for_each(|(i, out)| rot.apply_into(v.row(i), out));
+    Vectors { data, dim }
+}
+
 /// Sign-bit binary vectors, packed into u64 words. For angular/cosine,
 /// agreement of sign bits approximates similarity → rank by *min* Hamming.
 pub struct QuantBinary {

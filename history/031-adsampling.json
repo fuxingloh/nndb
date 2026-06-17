@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "43f714c",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 300, "reps": "2 (exact) / 3 (ads)",
+  "research": "ADSampling (Gao & Long, SIGMOD 2023, arXiv:2303.09855). Random-rotate vectors (JL) then compute squared L2 incrementally in batches of delta; prune a candidate once partial dist res >= threshold * ratio(D,i), ratio = (i/D)*(1+eps0/sqrt(i))^2. Survivors get exact distance (rotation preserves L2). Applied to the EXACT within-cell f32 scan (project core scope). delta=32, eps0=2.1 defaults.",
+  "note": "ADSampling speeds the exact scan 2.16x at recall 0.999 (eps0=2.1), 1.43x fully LOSSLESS (eps0=3.0, recall 1.0), up to 2.87x at 0.985 (eps0=1.5). Speedup below theoretical (prune after ~32-64 of 1024 dims) due to memory-access granularity (skipping a row's tail saves partial bandwidth) + per-batch branch + heap overhead. Doesn't beat the binary funnel on QPS (20 vs 851) but reaches HIGHER recall (exact/0.999) than binary can - it's the high-recall end of the Pareto. eps0 is the recall/speed dial.",
+  "results": [
+    {"method": "exact f32",   "eps0": null, "delta": null, "recall_at_10": 1.0000, "qps": 9.2,  "p50_ms": 706.86, "speedup": 1.00},
+    {"method": "adsampling",  "eps0": 3.0,  "delta": 32,   "recall_at_10": 1.0000, "qps": 13.2, "p50_ms": 588.28, "speedup": 1.43},
+    {"method": "adsampling",  "eps0": 2.1,  "delta": 32,   "recall_at_10": 0.9990, "qps": 19.9, "p50_ms": 438.03, "speedup": 2.16},
+    {"method": "adsampling",  "eps0": 1.5,  "delta": 32,   "recall_at_10": 0.9847, "qps": 26.4, "p50_ms": 314.35, "speedup": 2.87},
+    {"method": "adsampling",  "eps0": 2.1,  "delta": 16,   "recall_at_10": 0.9983, "qps": 20.6, "p50_ms": 412.59, "speedup": 2.24}
+  ]
+}

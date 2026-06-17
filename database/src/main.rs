@@ -77,6 +77,14 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     rotate: usize,
 
+    /// ADSampling pruning confidence constant eps0 (only --quant adsampling).
+    #[arg(long, default_value_t = 2.1)]
+    eps0: f32,
+
+    /// ADSampling incremental batch size in dims (only --quant adsampling).
+    #[arg(long, default_value_t = 32)]
+    delta: usize,
+
     /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
     /// "i8" (int8 dot, ~4x smaller store + gather).
     #[arg(long, default_value = "f32")]
@@ -191,12 +199,21 @@ fn main() -> std::io::Result<()> {
     let quant_bin = args.quant == "binary";
     let quant_asym = args.quant == "asym";
     let quant_rabitq = args.quant == "rabitq";
+    let quant_ads = args.quant == "adsampling";
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
     let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
-    // RaBitQ requires a rotation; default to 2 rounds if none requested.
-    let rot_rounds = if quant_rabitq && args.rotate == 0 { 2 } else { args.rotate };
+    // RaBitQ/ADSampling require a rotation; default rounds if none requested.
+    let rot_rounds = if args.rotate > 0 {
+        args.rotate
+    } else if quant_ads {
+        3
+    } else if quant_rabitq {
+        2
+    } else {
+        0
+    };
     let rot = if rot_rounds > 0 { Some(quant::Rotation::new(base.dim, rot_rounds, 0x5EED)) } else { None };
     let mk = |v: &fvecs::Vectors| match &rot {
         Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
@@ -205,6 +222,9 @@ fn main() -> std::io::Result<()> {
     let bbase = if quant_bin || quant_asym { Some(mk(&base)) } else { None };
     let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
     let rb = if quant_rabitq { Some(quant::RaBitQ::build(&base, rot.as_ref().unwrap(), bits)) } else { None };
+    // ADSampling: rotate base + query set so partial distances are unbiased.
+    let rbase = if quant_ads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
+    let rqps = if quant_ads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,
@@ -218,7 +238,9 @@ fn main() -> std::io::Result<()> {
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
     let run = || {
-        if let Some(rb) = &rb {
+        if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
+            search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
+        } else if let Some(rb) = &rb {
             quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
         } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
             quant::knn_i8_batch(qb, qq, args.k)
@@ -273,7 +295,12 @@ fn main() -> std::io::Result<()> {
     let mut lat_ms: Vec<f64> = Vec::with_capacity(n_lat);
     for q in 0..n_lat {
         let t = Instant::now();
-        if let Some(rb) = &rb {
+        if let Some(rb) = &rbase {
+            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
+            let r = search::knn_adsampling(rb, &qr, args.k, args.eps0, args.delta);
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        } else if let Some(rb) = &rb {
             let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
             let r = if args.rerank > 0 {
                 let cands = quant::knn_rabitq(rb, &qr, args.rerank.max(args.k));
