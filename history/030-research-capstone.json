@@ -1,0 +1,19 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "652ace1",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 8,
+  "note": "Capstone of the research block (026-030). Same-run head-to-head: 009 baseline (plain binary, tile=1, C=1000) vs research-best (rotation x2 + tiling x16). Research adds +0.29pts recall AND +64% QPS (0.9931@516 -> 0.9960@845), or 0.9990@730. Research = RaBitQ/ITQ random rotation (free, popcount-speed). Summary of 026-030 below.",
+  "head_to_head": [
+    {"config": "009 baseline (plain, tile=1, C=1000)",        "recall_at_10": 0.9931, "qps": 516.4, "p50_ms": 11.51},
+    {"config": "research best (rot2, tile=16, C=1000)",       "recall_at_10": 0.9960, "qps": 845.4, "p50_ms": 11.40},
+    {"config": "research best-recall (rot2, tile=16, C=2000)","recall_at_10": 0.9990, "qps": 730.0, "p50_ms": 13.14}
+  ],
+  "research_block": [
+    {"entry": "026", "topic": "RaBitQ/ITQ random rotation before sign-binarization", "result": "free recall: +2.4pts stage-1, 0.9943->0.9970 @ C=1000, zero QPS cost"},
+    {"entry": "027", "topic": "rotation + prefix truncation", "result": "rotation rescues prefix: +4.6pts @ 512/C=1000; 768-bit 0.983 @ 923 QPS"},
+    {"entry": "028", "topic": "RaBitQ unbiased estimator (2*maskedsum-sumq)/||o'||1", "result": "best recall-per-bit: stage-1 0.606 vs 0.463, 5-10x smaller C; but 40x slower scan (needs fast SIMD kernel)"},
+    {"entry": "029", "topic": "rotated combined Pareto vs non-rotated 018", "result": "frontier shifts out at every tier; 768/C=2000 0.986@762 -> 0.994@815"},
+    {"entry": "030", "topic": "capstone head-to-head", "result": "research-best 0.996@845 or 0.999@730 vs 009 0.993@516"}
+  ]
+}
