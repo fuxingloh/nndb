@@ -303,6 +303,78 @@ pub fn knn_pdx_batch(pdx: &PdxBase, queries: &Vectors, k: usize) -> Vec<Vec<u32>
         .collect()
 }
 
+/// ADSampling pruning ON the PDX layout (the combination PDX is built for). For
+/// each block we accumulate partial squared distances dimension-by-dimension over
+/// the *alive* vectors; after each batch we drop vectors whose partial already
+/// exceeds the k-th best by the ADSampling margin, so they skip their remaining
+/// dims. The dimension-major layout keeps the alive-vector inner loop tight while
+/// pruning shrinks the work — recovering the speedup that early termination loses
+/// on a row-major layout (031). `q` must be RANDOM-ROTATED.
+pub fn knn_pdx_adsampling(pdx: &PdxBase, q: &[f32], k: usize, eps0: f32, delta: usize) -> Vec<u32> {
+    let dim = pdx.dim;
+    let step = delta.max(1);
+    let mut heap: BinaryHeap<(Dist, u32)> = BinaryHeap::with_capacity(k + 1);
+    let mut partial = vec![0f32; pdx.block];
+    let mut alive: Vec<u32> = Vec::with_capacity(pdx.block);
+    let mut off = 0;
+    let mut start = 0;
+    while start < pdx.n {
+        let bsz = pdx.block.min(pdx.n - start);
+        partial[..bsz].iter_mut().for_each(|p| *p = 0.0);
+        alive.clear();
+        alive.extend(0..bsz as u32);
+        let full = heap.len() >= k;
+        let thr = if full { heap.peek().unwrap().0 .0 } else { f32::INFINITY };
+        let mut i = 0;
+        while i < dim && !alive.is_empty() {
+            let end = (i + step).min(dim);
+            for d in i..end {
+                let qd = q[d];
+                let col = &pdx.data[off + d * bsz..off + d * bsz + bsz];
+                for &v in &alive {
+                    let vv = v as usize;
+                    let df = qd - col[vv];
+                    partial[vv] += df * df;
+                }
+            }
+            i = end;
+            if full && i < dim {
+                let fi = i as f32;
+                let t = 1.0 + eps0 / fi.sqrt();
+                let bound = thr * (fi / dim as f32) * t * t;
+                alive.retain(|&v| partial[v as usize] < bound);
+            }
+        }
+        for &v in &alive {
+            let d = Dist(partial[v as usize]);
+            let idx = start as u32 + v;
+            if heap.len() < k {
+                heap.push((d, idx));
+            } else if d < heap.peek().unwrap().0 {
+                heap.pop();
+                heap.push((d, idx));
+            }
+        }
+        off += bsz * dim;
+        start += bsz;
+    }
+    heap.into_sorted_vec().into_iter().map(|(_, i)| i).collect()
+}
+
+/// Parallel PDX+ADSampling over a (rotated) query set.
+pub fn knn_pdx_adsampling_batch(
+    pdx: &PdxBase,
+    rqueries: &Vectors,
+    k: usize,
+    eps0: f32,
+    delta: usize,
+) -> Vec<Vec<u32>> {
+    (0..rqueries.len())
+        .into_par_iter()
+        .map(|q| knn_pdx_adsampling(pdx, rqueries.row(q), k, eps0, delta))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +403,20 @@ mod tests {
         let pdx = PdxBase::from_vectors(&base, 3); // 8 rows, block 3 -> 3,3,2
         for k in 1..=4 {
             assert_eq!(knn_pdx(&pdx, &q, k), knn(&base, &q, k), "k={k}");
+        }
+    }
+
+    #[test]
+    fn pdx_adsampling_conservative_matches_exact() {
+        let base = vecs(&[
+            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
+            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
+        ]);
+        let q = [0.1, 0.1];
+        let pdx = PdxBase::from_vectors(&base, 3);
+        for k in 1..=4 {
+            // eps0 huge => never prunes => exact.
+            assert_eq!(knn_pdx_adsampling(&pdx, &q, k, 100.0, 1), knn(&base, &q, k), "k={k}");
         }
     }
 

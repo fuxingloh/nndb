@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "31da2cf",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 300, "reps": 3, "block": 64,
+  "note": "ADSampling pruning ON the PDX vertical layout (031 + 032 combined). Restores the pruning speedup that early-termination loses on row-major (the PDX paper's claim). PDX+ADS eps0=2.1: 37.4 QPS @ recall 0.999 = 4x naive exact (9.3), 1.9x horizontal ADSampling (19.9). Lossless eps0=3.0: 23.1 QPS @ 1.0. eps0=1.5: 54.8 @ 0.985. STILL far below the binary funnel (851 QPS) - this is the EXACT tier. Motivates stacking the SAME pruning onto the binary funnel's rerank (034).",
+  "results": [
+    {"method": "horizontal adsampling", "eps0": 2.1, "recall_at_10": 0.9990, "qps": 19.9, "p50_ms": 416.51},
+    {"method": "pdx plain",             "eps0": null,"recall_at_10": 1.0000, "qps": 17.9, "p50_ms": 222.15},
+    {"method": "pdx+adsampling",        "eps0": 3.0, "recall_at_10": 1.0000, "qps": 23.1, "p50_ms": 386.75},
+    {"method": "pdx+adsampling",        "eps0": 2.1, "recall_at_10": 0.9990, "qps": 37.4, "p50_ms": 219.16},
+    {"method": "pdx+adsampling",        "eps0": 1.5, "recall_at_10": 0.9850, "qps": 54.8, "p50_ms": 134.81},
+    {"method": "pdx+adsampling b=128",  "eps0": 2.1, "recall_at_10": 0.9990, "qps": 36.2, "p50_ms": 223.43}
+  ]
+}
