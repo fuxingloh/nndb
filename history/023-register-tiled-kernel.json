@@ -1,0 +1,13 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "25a82aa",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, AVX-512 VPOPCNTDQ)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 6, "tile": 16,
+  "note": "NEGATIVE. Tiled scan kernel: per-query count_ones (autovectorizes to VPOPCNTDQ over words) vs register-tiled (doc-word outer, scalar popcount, doc word kept in register across the tile). Register-tiling is 40-60% SLOWER -> it defeats VPOPCNTDQ (scalar popcount per word), and the doc was already L1-hot across the tile so the reuse it chased was free. Same lesson as 012. Default stays per-query; --tile-rt is opt-in.",
+  "results": [
+    {"scan_bits": 1024, "kernel": "per-query (VPOPCNTDQ)", "recall_at_10": 0.9931, "qps": 846.5},
+    {"scan_bits": 1024, "kernel": "register-tiled",        "recall_at_10": 0.9931, "qps": 338.6},
+    {"scan_bits": 512,  "kernel": "per-query (VPOPCNTDQ)", "recall_at_10": 0.8842, "qps": 1056.0},
+    {"scan_bits": 512,  "kernel": "register-tiled",        "recall_at_10": 0.8842, "qps": 620.0}
+  ]
+}

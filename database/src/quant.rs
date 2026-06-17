@@ -211,10 +211,12 @@ pub fn knn_binary_funnel_tiled(
     k: usize,
     c: usize,
     tile: usize,
+    reg: bool,
 ) -> Vec<Vec<u32>> {
     let nq = bqueries.len();
     let want = if c == 0 { k } else { c.max(k) };
     let n = bbase.len();
+    let words = bbase.words;
     let tile = tile.max(1);
     let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
     results
@@ -223,12 +225,31 @@ pub fn knn_binary_funnel_tiled(
         .for_each(|(ci, chunk)| {
             let q0 = ci * tile;
             let t = chunk.len();
+            let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
             let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
                 (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
+            let mut acc = vec![0u32; t];
             for i in 0..n {
                 let doc = bbase.row(i);
+                if reg {
+                    // doc-word outer: keep each doc word in a register, reused
+                    // across the tile (scalar popcount, no VPOPCNTDQ over words).
+                    acc.iter_mut().for_each(|a| *a = 0);
+                    for w in 0..words {
+                        let dw = doc[w];
+                        for j in 0..t {
+                            acc[j] += (qrows[j][w] ^ dw).count_ones();
+                        }
+                    }
+                } else {
+                    // per-query hamming (autovectorizes to VPOPCNTDQ over words);
+                    // doc stays hot in L1 across the tile.
+                    for j in 0..t {
+                        acc[j] = hamming(qrows[j], doc);
+                    }
+                }
                 for j in 0..t {
-                    let h = hamming(bqueries.row(q0 + j), doc);
+                    let h = acc[j];
                     let hp = &mut heaps[j];
                     if hp.len() < want {
                         hp.push((h, i as u32));
