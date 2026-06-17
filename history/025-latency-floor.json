@@ -1,0 +1,14 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "96a86ef",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "latency_queries": 300,
+  "note": "Capstone of the 021-025 latency push: minimum-latency stack = intra-query parallel scan (021, query-threads=8) + parallel rerank (022) + prefix (014). Single-query p50 floor ~2.6ms (768/C=2000, recall~0.97) vs 12.67ms single-thread = ~4.9x. 512/C=4000 (3.88ms) is WORSE than 768/C=2000 (2.61ms) - larger rerank C outweighs cheaper scan even parallelized; 768/C=2000 is the sweet spot. recall figures are the noisy 100-query slice; canonical recall per 018. 023/024 confirmed the compute/bandwidth ceiling (no kernel/prefetch lever left).",
+  "results": [
+    {"config": "single-thread full C=1000",      "stack": false, "p50_ms": 12.67, "p99_ms": 13.19},
+    {"config": "stack full-1024 C=1000",          "stack": true, "recall_slice": 0.983, "p50_ms": 3.60, "p99_ms": 4.14},
+    {"config": "stack 768-bit C=2000",            "stack": true, "recall_slice": 0.972, "p50_ms": 2.61, "p99_ms": 3.59},
+    {"config": "stack 512-bit C=2000",            "stack": true, "recall_slice": 0.866, "p50_ms": 2.62, "p99_ms": 2.87},
+    {"config": "stack 512-bit C=4000",            "stack": true, "recall_slice": 0.907, "p50_ms": 3.88, "p99_ms": 4.51}
+  ]
+}
