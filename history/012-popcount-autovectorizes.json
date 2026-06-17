@@ -1,0 +1,15 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "2d57a24",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, AVX-512 VPOPCNTDQ)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "reps": 6,
+  "note": "Before/after for the multi-accumulator hamming experiment. SIMPLE = naive count_ones loop (autovectorizes to vector popcount). MULTIACC = 4 scalar accumulators (the f32-kernel trick). Same conditions, same run. Recall identical (bit-exact). MULTIACC is ~2.2x SLOWER -> reverted, kept SIMPLE. Cross-checked on M3 NEON (single-core scan: simple 240 vs multiacc 115 QPS) -> same conclusion, both arches.",
+  "results": [
+    {"kernel": "simple (autovec popcount)", "rerank": 0,    "recall_at_10": 0.4681, "qps": 444.5, "qps_cv": 0.003},
+    {"kernel": "simple (autovec popcount)", "rerank": 1000, "recall_at_10": 0.9943, "qps": 421.2, "qps_cv": 0.004},
+    {"kernel": "simple (autovec popcount)", "rerank": 0,    "recall_at_10": 0.4681, "qps": 71.5,  "threads": 1},
+    {"kernel": "multiacc (4 scalar acc)",   "rerank": 0,    "recall_at_10": 0.4681, "qps": 200.0, "qps_cv": 0.015},
+    {"kernel": "multiacc (4 scalar acc)",   "rerank": 1000, "recall_at_10": 0.9943, "qps": 195.5, "qps_cv": 0.011},
+    {"kernel": "multiacc (4 scalar acc)",   "rerank": 0,    "recall_at_10": 0.4681, "qps": 43.6,  "threads": 1}
+  ]
+}

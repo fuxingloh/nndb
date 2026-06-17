@@ -121,7 +121,12 @@ impl QuantBinary {
     }
 }
 
-/// Hamming distance (differing sign bits) via XOR + popcount (hardware POPCNT/CNT).
+/// Hamming distance (differing sign bits) via XOR + popcount.
+/// Keep this loop simple on purpose: `count_ones` over the slice autovectorizes
+/// to hardware *vector* popcount (NEON `CNT` on ARM, `VPOPCNTDQ` on AVX-512), so
+/// the naive form is already SIMD. Manually splitting the reduction into multiple
+/// scalar accumulators (the trick that helps the f32 FMA kernel) *defeats* that
+/// autovectorization — measured ~2x slower on M3, see history/012. Don't.
 #[inline]
 pub fn hamming(a: &[u64], b: &[u64]) -> u32 {
     let mut d = 0u32;
