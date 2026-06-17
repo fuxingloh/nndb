@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "18610a3",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "transport": "http", "k": 10, "requests": 400, "warmup": 40, "max_concurrency": 8,
+  "note": "Serve the actual winner. server.rs now does binary scan + f32 rerank (C=1000); loadtest/server take --prefix. Concurrency sweep, user-facing latency through HTTP. Binary funnel: 462 QPS at conc=cores, p50 17ms; f32 exact: 9.3 QPS, p50 858ms -> ~50x throughput AND ~50x lower latency end-to-end. Confirms 002 model: ceiling at conc=cores, beyond that compute flat and only queuing grows; HTTP adds <0.7ms.",
+  "sweep": [
+    {"mode": "f32",    "concurrency": 1,  "qps": 1.4,   "client_p50_ms": 701.69, "client_p99_ms": 734.17, "server_compute_p50_ms": 701.01},
+    {"mode": "f32",    "concurrency": 8,  "qps": 9.3,   "client_p50_ms": 858.22, "client_p99_ms": 861.54, "server_compute_p50_ms": 857.72},
+    {"mode": "f32",    "concurrency": 16, "qps": 9.3,   "client_p50_ms": 1714.40, "client_p99_ms": 1720.66, "server_compute_p50_ms": 856.66},
+    {"mode": "f32",    "concurrency": 32, "qps": 9.6,   "client_p50_ms": 3427.62, "client_p99_ms": 3454.30, "server_compute_p50_ms": 857.05},
+    {"mode": "binary", "concurrency": 1,  "qps": 82.0,  "client_p50_ms": 12.20,  "client_p99_ms": 12.71,  "server_compute_p50_ms": 11.56},
+    {"mode": "binary", "concurrency": 8,  "qps": 461.7, "client_p50_ms": 17.27,  "client_p99_ms": 24.16,  "server_compute_p50_ms": 16.88},
+    {"mode": "binary", "concurrency": 16, "qps": 482.6, "client_p50_ms": 32.62,  "client_p99_ms": 43.11,  "server_compute_p50_ms": 16.05},
+    {"mode": "binary", "concurrency": 32, "qps": 476.2, "client_p50_ms": 65.83,  "client_p99_ms": 80.09,  "server_compute_p50_ms": 16.27}
+  ]
+}

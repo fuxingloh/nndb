@@ -21,14 +21,18 @@ use axum::{
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
-use vector_search::{fvecs, search};
+use vector_search::{fvecs, quant, search};
 
 #[derive(Parser)]
-#[command(about = "In-memory vector-search HTTP server (SIFT1M)")]
+#[command(about = "In-memory vector-search HTTP server")]
 struct Args {
-    /// Directory holding sift_base.fvecs
+    /// Directory holding <prefix>_base.fvecs
     #[arg(long, default_value = "data/sift")]
     data: PathBuf,
+
+    /// Dataset file prefix (e.g. "sift", "cohere")
+    #[arg(long, default_value = "sift")]
+    prefix: String,
 
     /// Address to bind
     #[arg(long, default_value = "127.0.0.1:8080")]
@@ -37,10 +41,26 @@ struct Args {
     /// Max concurrent searches (0 = number of CPU cores)
     #[arg(long, default_value_t = 0)]
     max_concurrency: usize,
+
+    /// Search mode: "f32" (exact brute force) or "binary" (binary scan + f32 rerank)
+    #[arg(long, default_value = "f32")]
+    quant: String,
+
+    /// Rerank candidate count C for binary mode (0 = no rerank)
+    #[arg(long, default_value_t = 1000)]
+    rerank: usize,
+
+    /// Scan only the first N dims of the binary code (0 = full)
+    #[arg(long, default_value_t = 0)]
+    scan_bits: usize,
 }
 
 struct AppState {
     base: fvecs::Vectors,
+    /// Binary codes for the scan tier (None = exact f32 mode).
+    bbase: Option<quant::QuantBinary>,
+    bits: usize,
+    rerank: usize,
     /// Bounds in-flight CPU-bound searches so load translates into queuing.
     sem: Semaphore,
 }
@@ -106,7 +126,19 @@ async fn search_handler(
     let state2 = state.clone();
     let ids = tokio::task::spawn_blocking(move || {
         let t = Instant::now();
-        let ids = search::knn(&state2.base, &req.vector, req.k);
+        let ids = match &state2.bbase {
+            Some(bb) => {
+                let bq = quant::binarize_query(&req.vector, state2.bits);
+                if state2.rerank > 0 {
+                    let cands =
+                        quant::knn_binary_sel(bb, &bq, state2.rerank.max(req.k), quant::BinSel::Heap);
+                    quant::rerank(&state2.base, &req.vector, &cands, req.k)
+                } else {
+                    quant::knn_binary_sel(bb, &bq, req.k, quant::BinSel::Heap)
+                }
+            }
+            None => search::knn(&state2.base, &req.vector, req.k),
+        };
         (ids, t.elapsed().as_micros())
     })
     .await
@@ -122,7 +154,7 @@ async fn search_handler(
 async fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
-    let base = fvecs::read_fvecs(args.data.join("sift_base.fvecs"))?;
+    let base = fvecs::read_fvecs(args.data.join(format!("{}_base.fvecs", args.prefix)))?;
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let max_conc = if args.max_concurrency == 0 {
         cores
@@ -130,16 +162,29 @@ async fn main() -> std::io::Result<()> {
         args.max_concurrency
     };
 
+    let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
+    let bbase = if args.quant == "binary" {
+        Some(quant::QuantBinary::from_f32_prefix(&base, bits))
+    } else {
+        None
+    };
+
     println!(
-        "loaded {} x {} dim; serving on http://{} (max_concurrency={})",
+        "loaded {} x {} dim; mode={} rerank={} scan_bits={}; serving on http://{} (max_concurrency={})",
         base.len(),
         base.dim,
+        args.quant,
+        args.rerank,
+        bits,
         args.addr,
         max_conc
     );
 
     let state = Arc::new(AppState {
         base,
+        bbase,
+        bits,
+        rerank: args.rerank,
         sem: Semaphore::new(max_conc),
     });
 

@@ -22,9 +22,13 @@ struct Args {
     #[arg(long, default_value = "http://127.0.0.1:8080/search")]
     url: String,
 
-    /// Directory holding sift_query.fvecs (source of realistic queries)
+    /// Directory holding <prefix>_query.fvecs (source of realistic queries)
     #[arg(long, default_value = "data/sift")]
     data: PathBuf,
+
+    /// Dataset file prefix (e.g. "sift", "cohere")
+    #[arg(long, default_value = "sift")]
+    prefix: String,
 
     /// Number of concurrent in-flight requests
     #[arg(long, default_value_t = 8)]
@@ -90,8 +94,9 @@ async fn one_request(
 async fn main() {
     let args = Args::parse();
 
-    let queries = fvecs::read_fvecs(args.data.join("sift_query.fvecs"))
-        .expect("read sift_query.fvecs");
+    let qfile = format!("{}_query.fvecs", args.prefix);
+    let queries = fvecs::read_fvecs(args.data.join(&qfile))
+        .unwrap_or_else(|_| panic!("read {qfile}"));
     let nq = queries.len();
     let queries = Arc::new(queries);
     let client = reqwest::Client::builder()

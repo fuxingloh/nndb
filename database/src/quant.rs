@@ -141,6 +141,21 @@ impl QuantBinary {
     }
 }
 
+/// Binarize a single query vector's first `bits` dims into packed sign words
+/// (matches `from_f32_prefix`'s layout). For the serving path, which binarizes
+/// one query at a time. `bits == 0` means full length.
+pub fn binarize_query(query: &[f32], bits: usize) -> Vec<u64> {
+    let dim = if bits == 0 { query.len() } else { bits.min(query.len()) };
+    let words = dim.div_ceil(64);
+    let mut out = vec![0u64; words];
+    for d in 0..dim {
+        if query[d] > 0.0 {
+            out[d / 64] |= 1u64 << (d % 64);
+        }
+    }
+    out
+}
+
 /// Hamming distance (differing sign bits) via XOR + popcount.
 /// Keep this loop simple on purpose: `count_ones` over the slice autovectorizes
 /// to hardware *vector* popcount (NEON `CNT` on ARM, `VPOPCNTDQ` on AVX-512), so
