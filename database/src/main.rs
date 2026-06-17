@@ -67,6 +67,11 @@ struct Args {
     #[arg(long, default_value = "heap")]
     select: String,
 
+    /// Scan only the first N dimensions of the binary code (Matryoshka-style
+    /// prefix; 0 = full dim). Less scan bandwidth; rerank still uses full f32.
+    #[arg(long, default_value_t = 0)]
+    scan_bits: usize,
+
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
     /// (ground truth references the full base).
@@ -160,8 +165,9 @@ fn main() -> std::io::Result<()> {
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
-    let bbase = if quant_bin || quant_asym { Some(quant::QuantBinary::from_f32(&base)) } else { None };
-    let bquery = if quant_bin { Some(quant::QuantBinary::from_f32(&qps_set)) } else { None };
+    let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
+    let bbase = if quant_bin || quant_asym { Some(quant::QuantBinary::from_f32_prefix(&base, bits)) } else { None };
+    let bquery = if quant_bin { Some(quant::QuantBinary::from_f32_prefix(&qps_set, bits)) } else { None };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,

@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "02c115e",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "latency_queries": 200, "reps": 6,
+  "note": "Truncated/prefix binary scan: scan only the first N dims of the binary code (--scan-bits), rerank with full f32. Less scan bandwidth -> higher QPS; recall recovered by rerank up to a point. Scan is bandwidth-bound: 512/1024 bits ~doubles scan QPS. Cohere v3 is NOT Matryoshka-trained so prefix dims aren't the most informative; near-iso-recall sweet spot is 768/C=2000 (+23% QPS, recall 0.987 vs full 0.994). All rows same run/conditions; compare within table.",
+  "results": [
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.9943, "qps": 418.8, "p50_ms": 15.65},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.9706, "qps": 583.6, "p50_ms": 11.19},
+    {"scan_bits": 768,  "rerank": 2000, "recall_at_10": 0.9868, "qps": 517.0, "p50_ms": 12.49},
+    {"scan_bits": 512,  "rerank": 1000, "recall_at_10": 0.8906, "qps": 810.0, "p50_ms": 5.54},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.9359, "qps": 699.3, "p50_ms": 7.66},
+    {"scan_bits": 512,  "rerank": 4000, "recall_at_10": 0.9649, "qps": 550.9, "p50_ms": 11.36},
+    {"scan_bits": 256,  "rerank": 2000, "recall_at_10": 0.6930, "qps": 975.5, "p50_ms": 5.49},
+    {"scan_bits": 256,  "rerank": 4000, "recall_at_10": 0.7688, "qps": 719.9, "p50_ms": 7.96}
+  ]
+}

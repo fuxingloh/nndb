@@ -112,6 +112,26 @@ impl QuantBinary {
         QuantBinary { data, words, dim: v.dim }
     }
 
+    /// Pack only the first `bits` dimensions (a Matryoshka-style prefix). Scanning
+    /// fewer words = less bandwidth per doc; recall lost in stage-1 is recovered
+    /// by the full-precision rerank. `bits >= dim` is the same as `from_f32`.
+    pub fn from_f32_prefix(v: &Vectors, bits: usize) -> Self {
+        let dim = bits.min(v.dim);
+        let words = dim.div_ceil(64);
+        let n = v.len();
+        let mut data = vec![0u64; n * words];
+        for i in 0..n {
+            let row = v.row(i);
+            let out = &mut data[i * words..(i + 1) * words];
+            for d in 0..dim {
+                if row[d] > 0.0 {
+                    out[d / 64] |= 1u64 << (d % 64);
+                }
+            }
+        }
+        QuantBinary { data, words, dim }
+    }
+
     #[inline]
     pub fn row(&self, i: usize) -> &[u64] {
         &self.data[i * self.words..(i + 1) * self.words]
