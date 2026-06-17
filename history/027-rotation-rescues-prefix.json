@@ -1,0 +1,17 @@
+{
+  "date": "2026-06-17T00:00:00Z", "commit": "2c21bb4",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 4, "tile": 16,
+  "note": "Rotation (026) + prefix truncation (014). A prefix of the ROTATED vector is a random projection (each output dim mixes all D inputs) rather than dropping raw dims, so truncation loses far less recall. Gain is LARGER under truncation (+4.6pts at 512/C=1000) than at full bits (+0.27pts), directly fixing 014's limitation that Cohere isn't Matryoshka-trained. QPS unchanged (rotation free). New: 768-bit rot2 C=1000 = 0.983 @ 923 QPS (vs 014's 768 needing C=2000 for ~0.987 @ ~517).",
+  "results": [
+    {"scan_bits": 512, "rotate": 0, "rerank": 0,    "recall_at_10": 0.2609, "qps": 1279.1},
+    {"scan_bits": 512, "rotate": 2, "rerank": 0,    "recall_at_10": 0.3007, "qps": 1283.9},
+    {"scan_bits": 512, "rotate": 0, "rerank": 1000, "recall_at_10": 0.8842, "qps": 1035.8},
+    {"scan_bits": 512, "rotate": 2, "rerank": 1000, "recall_at_10": 0.9297, "qps": 1035.6},
+    {"scan_bits": 512, "rotate": 0, "rerank": 2000, "recall_at_10": 0.9303, "qps": 864.1},
+    {"scan_bits": 512, "rotate": 2, "rerank": 2000, "recall_at_10": 0.9626, "qps": 866.5},
+    {"scan_bits": 768, "rotate": 0, "rerank": 1000, "recall_at_10": 0.9703, "qps": 924.1},
+    {"scan_bits": 768, "rotate": 2, "rerank": 1000, "recall_at_10": 0.9829, "qps": 923.1}
+  ]
+}
