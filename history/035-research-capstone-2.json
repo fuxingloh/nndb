@@ -1,0 +1,21 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "b02ad65",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10,
+  "note": "Capstone of the training-free research arc (031-035). Principle (user-stated, confirmed): binarization is the QPS floor; research value must STACK on it, not compete. Consolidated operating points (numbers from the same-session entries cited). Two tiers: (A) the binary funnel = throughput king, where rotation (026-029) and ADSampling rerank (034) stack as value-adds; (B) exact accelerators (PDX 032, PDX+ADSampling 033) = a separate HIGH-RECALL region, 4x naive exact but ~20x below binary.",
+  "frontier": [
+    {"tier": "binary value-add", "config": "rotated+tiled, C=1000 (029)",  "recall_at_10": 0.9960, "qps": 845, "note": "best throughput@high recall"},
+    {"tier": "binary value-add", "config": "rotated+tiled, C=2000 (029)",  "recall_at_10": 0.9990, "qps": 730, "note": "deployable high-recall winner"},
+    {"tier": "binary value-add", "config": "binads C=4000 eps0=2.1 (034, untiled)", "recall_at_10": 0.9991, "qps": 463, "note": "ADSampling rerank, +10% vs plain at C=4000"},
+    {"tier": "exact accelerator","config": "PDX+ADSampling eps0=2.1 (033)", "recall_at_10": 0.9990, "qps": 37,  "note": "4x naive exact; recall binary can't reach as cheaply"},
+    {"tier": "exact accelerator","config": "PDX plain (032)",               "recall_at_10": 1.0000, "qps": 18,  "note": "2x naive exact, lossless"},
+    {"tier": "exact baseline",   "config": "naive exact f32",               "recall_at_10": 1.0000, "qps": 9,   "note": "brute force"}
+  ],
+  "techniques": [
+    {"entry": "031", "tech": "ADSampling (SIGMOD'23)", "training_free": true, "verdict": "2.16x exact scan @0.999; bandwidth-limited on row-major"},
+    {"entry": "032", "tech": "PDX layout (SIGMOD'25)",  "training_free": true, "verdict": "2x exact scan, 3x lower latency, free (autovectorized)"},
+    {"entry": "033", "tech": "PDX + ADSampling",        "training_free": true, "verdict": "4x naive exact @0.999; layout restores pruning speedup"},
+    {"entry": "034", "tech": "ADSampling rerank on binary funnel", "training_free": true, "verdict": "STACK: +5-10% funnel QPS at high C, near-lossless"}
+  ]
+}
