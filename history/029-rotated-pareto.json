@@ -1,0 +1,16 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "5895eb9",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 2000, "reps": 5, "rotate": 2, "tile": 16,
+  "note": "Deployable combined frontier: rotated-symmetric (026, free popcount-speed) + tiling (016) + prefix (014/027). Rotation shifts the whole recall-vs-QPS Pareto OUTWARD vs non-rotated 018: higher recall and/or QPS at every tier. Best new points: 0.996 @ 844 (1024/C=1000), 0.999 @ 730 (1024/C=2000), 0.994 @ 815 (768/C=2000 - prefix now viable at high recall thanks to rotation, +8pts recall AND +7% QPS over 018's 768/C=2000). vs original 009 (0.994 @ 585) and 020 best (0.993 @ 851).",
+  "results": [
+    {"scan_bits": 1024, "rerank": 500,  "recall_at_10": 0.9886, "qps": 915.5, "vs_018": "new point"},
+    {"scan_bits": 1024, "rerank": 1000, "recall_at_10": 0.9960, "qps": 844.0, "vs_018_nonrot": "0.9931 @ 850"},
+    {"scan_bits": 1024, "rerank": 2000, "recall_at_10": 0.9990, "qps": 730.4, "vs_018_nonrot": "0.9975 @ 731"},
+    {"scan_bits": 768,  "rerank": 1000, "recall_at_10": 0.9829, "qps": 957.1, "vs_018_nonrot": "0.9703 @ 893"},
+    {"scan_bits": 768,  "rerank": 2000, "recall_at_10": 0.9940, "qps": 814.9, "vs_018_nonrot": "0.9864 @ 762"},
+    {"scan_bits": 512,  "rerank": 2000, "recall_at_10": 0.9626, "qps": 830.6, "vs_018_nonrot": "0.9303 @ 829"},
+    {"scan_bits": 512,  "rerank": 4000, "recall_at_10": 0.9827, "qps": 632.3, "vs_018_nonrot": "0.9601 @ 626"}
+  ]
+}
