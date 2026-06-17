@@ -1,0 +1,18 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "a09b0bb",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, memory-bound)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "queries": 1000, "reps": 3, "rotate": 2,
+  "note": "Value-add STACKED on the binary funnel (per user steer: nothing beats binarization QPS, so stack on it). Same rotated binary scan; plain exact rerank vs ADSampling-pruned rerank (rotated f32, early-terminate candidates that can't beat the k-th). Gain GROWS with C (rerank's share grows): +5% @ C=1000, +6% @ C=2000, +10% @ C=4000, near-lossless at eps0=2.1 (recall -0.001). eps0=1.5 = +14% @ C=4000 at recall 0.99. Lets the funnel afford a higher C (more recall) without rerank cost growing linearly. Untiled here for a clean scan-matched comparison.",
+  "results": [
+    {"rerank": 1000, "mode": "plain",       "recall_at_10": 0.9970, "qps": 535.4, "p50_ms": 10.95},
+    {"rerank": 1000, "mode": "ads eps0=2.1","recall_at_10": 0.9962, "qps": 562.6, "p50_ms": 11.21},
+    {"rerank": 1000, "mode": "ads eps0=1.5","recall_at_10": 0.9874, "qps": 564.2, "p50_ms": 10.51},
+    {"rerank": 2000, "mode": "plain",       "recall_at_10": 0.9992, "qps": 493.5, "p50_ms": 12.47},
+    {"rerank": 2000, "mode": "ads eps0=2.1","recall_at_10": 0.9984, "qps": 523.9, "p50_ms": 11.53},
+    {"rerank": 2000, "mode": "ads eps0=1.5","recall_at_10": 0.9895, "qps": 532.8, "p50_ms": 11.34},
+    {"rerank": 4000, "mode": "plain",       "recall_at_10": 0.9999, "qps": 420.6, "p50_ms": 14.63},
+    {"rerank": 4000, "mode": "ads eps0=2.1","recall_at_10": 0.9991, "qps": 463.3, "p50_ms": 13.69},
+    {"rerank": 4000, "mode": "ads eps0=1.5","recall_at_10": 0.9901, "qps": 478.8, "p50_ms": 13.11}
+  ]
+}

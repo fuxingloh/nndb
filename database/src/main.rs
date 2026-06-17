@@ -206,6 +206,7 @@ fn main() -> std::io::Result<()> {
     let quant_ads = args.quant == "adsampling";
     let quant_pdx = args.quant == "pdx";
     let quant_pdxads = args.quant == "pdxads";
+    let quant_binads = args.quant == "binads"; // binary scan + ADSampling rerank (rotated)
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
@@ -215,7 +216,7 @@ fn main() -> std::io::Result<()> {
         args.rotate
     } else if quant_ads || quant_pdxads {
         3
-    } else if quant_rabitq {
+    } else if quant_rabitq || quant_binads {
         2
     } else {
         0
@@ -225,8 +226,11 @@ fn main() -> std::io::Result<()> {
         Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
         None => quant::QuantBinary::from_f32_prefix(v, bits),
     };
-    let bbase = if quant_bin || quant_asym { Some(mk(&base)) } else { None };
-    let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
+    let bbase = if quant_bin || quant_asym || quant_binads { Some(mk(&base)) } else { None };
+    let bquery = if quant_bin || quant_binads { Some(mk(&qps_set)) } else { None };
+    // binads rerank tier: rotated f32 base + query (L2 preserved under rotation).
+    let rfbase = if quant_binads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
+    let rqps_f = if quant_binads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
     let rb = if quant_rabitq { Some(quant::RaBitQ::build(&base, rot.as_ref().unwrap(), bits)) } else { None };
     // ADSampling: rotate base + query set so partial distances are unbiased.
     let rbase = if quant_ads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
@@ -257,6 +261,8 @@ fn main() -> std::io::Result<()> {
             search::knn_pdx_batch(px, &qps_set, args.k)
         } else if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
             search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
+        } else if let (Some(bb), Some(bq), Some(rf), Some(rqf)) = (&bbase, &bquery, &rfbase, &rqps_f) {
+            quant::knn_binary_funnel_ads_batch(bb, bq, rf, rqf, args.k, args.rerank, args.eps0, args.delta)
         } else if let Some(rb) = &rb {
             quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
         } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
@@ -348,6 +354,13 @@ fn main() -> std::io::Result<()> {
             } else {
                 quant::knn_asym(bb, queries_all.row(q), args.k)
             };
+            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            black_box(r);
+        } else if let (Some(bb), Some(bq), Some(rf)) = (&bbase, &bquery, &rfbase) {
+            let qi = q.min(bq.len() - 1);
+            let cands = quant::knn_binary(bb, bq.row(qi), args.rerank.max(args.k));
+            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
+            let r = quant::rerank_adsampling(rf, &qr, &cands, args.k, args.eps0, args.delta);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {

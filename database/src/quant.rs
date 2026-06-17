@@ -555,6 +555,85 @@ pub fn rerank_pf(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Ve
     scored.into_iter().take(k).map(|(_, i)| i).collect()
 }
 
+/// ADSampling-pruned rerank, STACKED on the binary funnel. The binary scan gives
+/// C candidates; here we rescore them with early-terminated exact L2 on the
+/// rotated f32 store: a candidate that provably can't beat the current k-th best
+/// is dropped without finishing its dims. Lets the funnel use a larger C (more
+/// recall) without the rerank cost growing linearly. `rq`/`rfbase` are ROTATED
+/// (L2 preserved, partial distances unbiased). eps0 controls pruning aggression.
+pub fn rerank_adsampling(
+    rfbase: &Vectors,
+    rq: &[f32],
+    cands: &[u32],
+    k: usize,
+    eps0: f32,
+    delta: usize,
+) -> Vec<u32> {
+    let d = rfbase.dim;
+    let step = delta.max(1);
+    let mut heap: BinaryHeap<(ScoreF, u32)> = BinaryHeap::with_capacity(k + 1);
+    for &c in cands {
+        let o = rfbase.row(c as usize);
+        if heap.len() < k {
+            let mut res = 0f32;
+            for j in 0..d {
+                let df = rq[j] - o[j];
+                res += df * df;
+            }
+            heap.push((ScoreF(res), c));
+            continue;
+        }
+        let thr = heap.peek().unwrap().0 .0;
+        let mut res = 0f32;
+        let mut i = 0usize;
+        let mut pruned = false;
+        while i < d {
+            let end = (i + step).min(d);
+            for j in i..end {
+                let df = rq[j] - o[j];
+                res += df * df;
+            }
+            i = end;
+            if i < d {
+                let fi = i as f32;
+                let t = 1.0 + eps0 / fi.sqrt();
+                if res >= thr * (fi / d as f32) * t * t {
+                    pruned = true;
+                    break;
+                }
+            }
+        }
+        if !pruned && res < thr {
+            heap.pop();
+            heap.push((ScoreF(res), c));
+        }
+    }
+    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().collect();
+    v.sort_by(|a, b| a.0 .0.partial_cmp(&b.0 .0).unwrap());
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
+/// Binary funnel with an ADSampling-pruned rerank tier (rotated). bqueries are
+/// rotated binary codes; rqueries/rfbase are rotated f32 for the rerank.
+pub fn knn_binary_funnel_ads_batch(
+    bbase: &QuantBinary,
+    bqueries: &QuantBinary,
+    rfbase: &Vectors,
+    rqueries: &Vectors,
+    k: usize,
+    c: usize,
+    eps0: f32,
+    delta: usize,
+) -> Vec<Vec<u32>> {
+    (0..bqueries.len())
+        .into_par_iter()
+        .map(|q| {
+            let cands = knn_binary(bbase, bqueries.row(q), c.max(k));
+            rerank_adsampling(rfbase, rqueries.row(q), &cands, k, eps0, delta)
+        })
+        .collect()
+}
+
 /// Parallel rerank: compute the C candidate L2s across rayon, then serial top-k.
 /// For the single-query latency path, where the C rescores are otherwise serial.
 pub fn rerank_par(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
