@@ -396,13 +396,10 @@ pub fn knn_binary_funnel_tiled(
     k: usize,
     c: usize,
     tile: usize,
-    reg: bool,
-    pf: bool,
 ) -> Vec<Vec<u32>> {
     let nq = bqueries.len();
     let want = if c == 0 { k } else { c.max(k) };
     let n = bbase.len();
-    let words = bbase.words;
     let tile = tile.max(1);
     let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
     results
@@ -417,22 +414,10 @@ pub fn knn_binary_funnel_tiled(
             let mut acc = vec![0u32; t];
             for i in 0..n {
                 let doc = bbase.row(i);
-                if reg {
-                    // doc-word outer: keep each doc word in a register, reused
-                    // across the tile (scalar popcount, no VPOPCNTDQ over words).
-                    acc.iter_mut().for_each(|a| *a = 0);
-                    for w in 0..words {
-                        let dw = doc[w];
-                        for j in 0..t {
-                            acc[j] += (qrows[j][w] ^ dw).count_ones();
-                        }
-                    }
-                } else {
-                    // per-query hamming (autovectorizes to VPOPCNTDQ over words);
-                    // doc stays hot in L1 across the tile.
-                    for j in 0..t {
-                        acc[j] = hamming(qrows[j], doc);
-                    }
+                // per-query hamming (autovectorizes to VPOPCNTDQ over words);
+                // doc stays hot in L1 across the tile.
+                for j in 0..t {
+                    acc[j] = hamming(qrows[j], doc);
                 }
                 for j in 0..t {
                     let h = acc[j];
@@ -453,11 +438,7 @@ pub fn knn_binary_funnel_tiled(
                     chunk[j] = v.into_iter().map(|(_, i)| i).collect();
                 } else {
                     let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
-                    chunk[j] = if pf {
-                        rerank_pf(fbase, fqueries.row(q0 + j), &cands, k)
-                    } else {
-                        rerank(fbase, fqueries.row(q0 + j), &cands, k)
-                    };
+                    chunk[j] = rerank(fbase, fqueries.row(q0 + j), &cands, k);
                 }
             }
         });
@@ -497,292 +478,6 @@ pub fn knn_binary_query_parallel(bbase: &QuantBinary, query: &[u64], c: usize, s
     all.into_iter().take(c).map(|(_, i)| i).collect()
 }
 
-/// Rerank candidate ids with int8 dot (max == cosine for unit vectors) → top-k.
-/// 4× smaller rerank store than f32 and 4× less traffic on the random candidate
-/// gather, at a small precision cost vs exact f32 rescoring.
-pub fn rerank_i8(i8base: &QuantI8, query: &[i8], cands: &[u32], k: usize) -> Vec<u32> {
-    let mut scored: Vec<(i32, u32)> = cands
-        .iter()
-        .map(|&c| (dot_i8(query, i8base.row(c as usize)), c))
-        .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0)); // descending dot
-    scored.into_iter().take(k).map(|(_, i)| i).collect()
-}
-
-/// Two-stage funnel with an int8 rerank tier (instead of f32). c=0 → scan only.
-pub fn knn_binary_funnel_i8_batch(
-    bbase: &QuantBinary,
-    bqueries: &QuantBinary,
-    i8base: &QuantI8,
-    i8queries: &QuantI8,
-    k: usize,
-    c: usize,
-    sel: BinSel,
-) -> Vec<Vec<u32>> {
-    (0..bqueries.len())
-        .into_par_iter()
-        .map(|q| {
-            if c == 0 {
-                knn_binary_sel(bbase, bqueries.row(q), k, sel)
-            } else {
-                let cands = knn_binary_sel(bbase, bqueries.row(q), c.max(k), sel);
-                rerank_i8(i8base, i8queries.row(q), &cands, k)
-            }
-        })
-        .collect()
-}
-
-/// Rerank with software prefetch of upcoming candidate rows. The candidate gather
-/// is random-access into the 3.9 GB f32 store; prefetching rows PF ahead hides the
-/// initial DRAM latency that the hardware prefetcher (which only streams *within* a
-/// row once touched) can't. x86 only; falls back to plain rerank elsewhere.
-pub fn rerank_pf(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
-    const PF: usize = 8;
-    let mut scored: Vec<(f32, u32)> = Vec::with_capacity(cands.len());
-    for (idx, &c) in cands.iter().enumerate() {
-        #[cfg(target_arch = "x86_64")]
-        unsafe {
-            if let Some(&nc) = cands.get(idx + PF) {
-                use core::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-                let p = fbase.data.as_ptr().add(nc as usize * fbase.dim) as *const i8;
-                _mm_prefetch(p, _MM_HINT_T0);
-                _mm_prefetch(p.add(64), _MM_HINT_T0);
-            }
-        }
-        scored.push((crate::search::l2_sq(fquery, fbase.row(c as usize)), c));
-    }
-    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    scored.into_iter().take(k).map(|(_, i)| i).collect()
-}
-
-/// ADSampling-pruned rerank, STACKED on the binary funnel. The binary scan gives
-/// C candidates; here we rescore them with early-terminated exact L2 on the
-/// rotated f32 store: a candidate that provably can't beat the current k-th best
-/// is dropped without finishing its dims. Lets the funnel use a larger C (more
-/// recall) without the rerank cost growing linearly. `rq`/`rfbase` are ROTATED
-/// (L2 preserved, partial distances unbiased). eps0 controls pruning aggression.
-pub fn rerank_adsampling(
-    rfbase: &Vectors,
-    rq: &[f32],
-    cands: &[u32],
-    k: usize,
-    eps0: f32,
-    delta: usize,
-) -> Vec<u32> {
-    let d = rfbase.dim;
-    let step = delta.max(1);
-    let mut heap: BinaryHeap<(ScoreF, u32)> = BinaryHeap::with_capacity(k + 1);
-    for &c in cands {
-        let o = rfbase.row(c as usize);
-        if heap.len() < k {
-            let mut res = 0f32;
-            for j in 0..d {
-                let df = rq[j] - o[j];
-                res += df * df;
-            }
-            heap.push((ScoreF(res), c));
-            continue;
-        }
-        let thr = heap.peek().unwrap().0 .0;
-        let mut res = 0f32;
-        let mut i = 0usize;
-        let mut pruned = false;
-        while i < d {
-            let end = (i + step).min(d);
-            for j in i..end {
-                let df = rq[j] - o[j];
-                res += df * df;
-            }
-            i = end;
-            if i < d {
-                let fi = i as f32;
-                let t = 1.0 + eps0 / fi.sqrt();
-                if res >= thr * (fi / d as f32) * t * t {
-                    pruned = true;
-                    break;
-                }
-            }
-        }
-        if !pruned && res < thr {
-            heap.pop();
-            heap.push((ScoreF(res), c));
-        }
-    }
-    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().collect();
-    v.sort_by(|a, b| a.0 .0.partial_cmp(&b.0 .0).unwrap());
-    v.into_iter().map(|(_, i)| i).collect()
-}
-
-/// bf16 (brain-float16) view of a vector set for the rerank tier: the top 16 bits
-/// of each f32 (8-bit exponent kept, mantissa truncated to 7 bits). Halves the
-/// rerank gather bandwidth — which is the tiled funnel's binding cost — at
-/// negligible precision loss (the query stays full-precision: asymmetric rerank).
-pub struct Bf16Vectors {
-    data: Vec<u16>,
-    dim: usize,
-}
-impl Bf16Vectors {
-    pub fn from_f32(v: &Vectors) -> Self {
-        let data = v.data.iter().map(|&x| (x.to_bits() >> 16) as u16).collect();
-        Bf16Vectors { data, dim: v.dim }
-    }
-    #[inline]
-    fn row(&self, i: usize) -> &[u16] {
-        &self.data[i * self.dim..(i + 1) * self.dim]
-    }
-}
-
-#[inline]
-fn bf16_to_f32(x: u16) -> f32 {
-    f32::from_bits((x as u32) << 16)
-}
-
-/// Rerank candidates against a bf16 doc store (query full precision). L2 == cosine
-/// for unit vectors; bf16 decode is a shift, so the inner loop still vectorizes.
-pub fn rerank_bf16(bf: &Bf16Vectors, fquery: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
-    let dim = bf.dim;
-    let mut scored: Vec<(f32, u32)> = cands
-        .iter()
-        .map(|&c| {
-            let row = bf.row(c as usize);
-            let mut s = 0f32;
-            for j in 0..dim {
-                let d = fquery[j] - bf16_to_f32(row[j]);
-                s += d * d;
-            }
-            (s, c)
-        })
-        .collect();
-    scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    scored.into_iter().take(k).map(|(_, i)| i).collect()
-}
-
-/// Tiled binary scan (016) + bf16 rerank (037): same scan, half-width rerank store.
-pub fn knn_binary_funnel_tiled_bf16(
-    bbase: &QuantBinary,
-    bqueries: &QuantBinary,
-    bf: &Bf16Vectors,
-    fqueries: &Vectors,
-    k: usize,
-    c: usize,
-    tile: usize,
-) -> Vec<Vec<u32>> {
-    let nq = bqueries.len();
-    let want = if c == 0 { k } else { c.max(k) };
-    let n = bbase.len();
-    let tile = tile.max(1);
-    let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
-    results
-        .par_chunks_mut(tile)
-        .enumerate()
-        .for_each(|(ci, chunk)| {
-            let q0 = ci * tile;
-            let t = chunk.len();
-            let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
-            let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
-                (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
-            for i in 0..n {
-                let doc = bbase.row(i);
-                for j in 0..t {
-                    let h = hamming(qrows[j], doc);
-                    let hp = &mut heaps[j];
-                    if hp.len() < want {
-                        hp.push((h, i as u32));
-                    } else if h < hp.peek().unwrap().0 {
-                        hp.pop();
-                        hp.push((h, i as u32));
-                    }
-                }
-            }
-            for j in 0..t {
-                let heap = std::mem::take(&mut heaps[j]);
-                let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
-                chunk[j] = if c == 0 {
-                    cands.into_iter().take(k).collect()
-                } else {
-                    rerank_bf16(bf, fqueries.row(q0 + j), &cands, k)
-                };
-            }
-        });
-    results
-}
-
-/// Tiled binary scan (016) + ADSampling-pruned rerank (034) combined. The two
-/// optimizations are orthogonal — tiling amortizes scan bandwidth across a query
-/// tile, ADSampling trims the rerank — so stacking them should lift QPS at no
-/// recall cost (with eps0 conservative). bqueries=rotated binary; rfbase/rqueries
-/// =rotated f32.
-pub fn knn_binary_funnel_tiled_ads(
-    bbase: &QuantBinary,
-    bqueries: &QuantBinary,
-    rfbase: &Vectors,
-    rqueries: &Vectors,
-    k: usize,
-    c: usize,
-    tile: usize,
-    eps0: f32,
-    delta: usize,
-) -> Vec<Vec<u32>> {
-    let nq = bqueries.len();
-    let want = if c == 0 { k } else { c.max(k) };
-    let n = bbase.len();
-    let tile = tile.max(1);
-    let mut results: Vec<Vec<u32>> = (0..nq).map(|_| Vec::new()).collect();
-    results
-        .par_chunks_mut(tile)
-        .enumerate()
-        .for_each(|(ci, chunk)| {
-            let q0 = ci * tile;
-            let t = chunk.len();
-            let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
-            let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
-                (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
-            for i in 0..n {
-                let doc = bbase.row(i);
-                for j in 0..t {
-                    let h = hamming(qrows[j], doc);
-                    let hp = &mut heaps[j];
-                    if hp.len() < want {
-                        hp.push((h, i as u32));
-                    } else if h < hp.peek().unwrap().0 {
-                        hp.pop();
-                        hp.push((h, i as u32));
-                    }
-                }
-            }
-            for j in 0..t {
-                let heap = std::mem::take(&mut heaps[j]);
-                let cands: Vec<u32> = heap.into_iter().map(|(_, i)| i).collect();
-                chunk[j] = if c == 0 {
-                    cands.into_iter().take(k).collect()
-                } else {
-                    rerank_adsampling(rfbase, rqueries.row(q0 + j), &cands, k, eps0, delta)
-                };
-            }
-        });
-    results
-}
-
-/// Binary funnel with an ADSampling-pruned rerank tier (rotated). bqueries are
-/// rotated binary codes; rqueries/rfbase are rotated f32 for the rerank.
-pub fn knn_binary_funnel_ads_batch(
-    bbase: &QuantBinary,
-    bqueries: &QuantBinary,
-    rfbase: &Vectors,
-    rqueries: &Vectors,
-    k: usize,
-    c: usize,
-    eps0: f32,
-    delta: usize,
-) -> Vec<Vec<u32>> {
-    (0..bqueries.len())
-        .into_par_iter()
-        .map(|q| {
-            let cands = knn_binary(bbase, bqueries.row(q), c.max(k));
-            rerank_adsampling(rfbase, rqueries.row(q), &cands, k, eps0, delta)
-        })
-        .collect()
-}
 
 /// Parallel rerank: compute the C candidate L2s across rayon, then serial top-k.
 /// For the single-query latency path, where the C rescores are otherwise serial.
@@ -794,15 +489,6 @@ pub fn rerank_par(fbase: &Vectors, fquery: &[f32], cands: &[u32], k: usize) -> V
     scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     scored.into_iter().take(k).map(|(_, i)| i).collect()
 }
-
-/// Binary scan only (no rerank), batched.
-pub fn knn_binary_batch(base: &QuantBinary, queries: &QuantBinary, k: usize) -> Vec<Vec<u32>> {
-    (0..queries.len())
-        .into_par_iter()
-        .map(|q| knn_binary(base, queries.row(q), k))
-        .collect()
-}
-
 /// Selection strategy for the binary scan's top-C step.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BinSel {
@@ -944,113 +630,9 @@ pub fn asym_score(query: &[f32], doc: &[u64]) -> f32 {
     s
 }
 
-/// Top-k by largest asymmetric score. Dispatches to the LUT kernel when dim is a
-/// multiple of 4 (the fast path), else the direct set-bit kernel (small/odd dims).
-pub fn knn_asym(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
-    if bbase.dim % 4 == 0 {
-        knn_asym_lut(bbase, query, k)
-    } else {
-        knn_asym_setbit(bbase, query, k)
-    }
-}
-
-/// Direct kernel: iterate set bits + gather. Correct but slow (no precompute).
-fn knn_asym_setbit(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
-    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(k + 1);
-    for i in 0..bbase.len() {
-        let s = ScoreF(asym_score(query, bbase.row(i)));
-        if heap.len() < k {
-            heap.push(Reverse((s, i as u32)));
-        } else if s > heap.peek().unwrap().0 .0 {
-            heap.pop();
-            heap.push(Reverse((s, i as u32)));
-        }
-    }
-    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
-    v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-    v.into_iter().map(|(_, i)| i).collect()
-}
-
-/// LUT kernel — the Exa trick. Since docs are binary, precompute one table per
-/// 4-bit nibble position: table[p][pattern] = masked query-sum for those 4 dims
-/// under that sign pattern. Scanning a doc = sum the looked-up partials (one
-/// indexed lookup per nibble), instead of per-bit gathers. 1024-d → 256 tables ×
-/// 16 = 16 KB (L1-resident). Same score as the direct kernel → same recall.
-/// (Full speed wants `vpshufb`/`vpermb` SIMD gather over an int8 table; this is
-/// the scalar version that proves the structure.)
-fn knn_asym_lut(bbase: &QuantBinary, query: &[f32], k: usize) -> Vec<u32> {
-    let nib = bbase.dim / 4;
-    let mut lut = vec![0f32; nib * 16];
-    for p in 0..nib {
-        let (q0, q1, q2, q3) = (query[4 * p], query[4 * p + 1], query[4 * p + 2], query[4 * p + 3]);
-        let t = &mut lut[16 * p..16 * p + 16];
-        for (pat, e) in t.iter_mut().enumerate() {
-            *e = (if pat & 1 != 0 { q0 } else { 0.0 })
-                + (if pat & 2 != 0 { q1 } else { 0.0 })
-                + (if pat & 4 != 0 { q2 } else { 0.0 })
-                + (if pat & 8 != 0 { q3 } else { 0.0 });
-        }
-    }
-    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(k + 1);
-    for i in 0..bbase.len() {
-        let doc = bbase.row(i);
-        let mut s = 0f32;
-        for p in 0..nib {
-            let word = doc[p >> 4]; // 16 nibbles per u64
-            let nibble = ((word >> ((p & 15) * 4)) & 0xF) as usize;
-            s += lut[16 * p + nibble];
-        }
-        let sc = ScoreF(s);
-        if heap.len() < k {
-            heap.push(Reverse((sc, i as u32)));
-        } else if sc > heap.peek().unwrap().0 .0 {
-            heap.pop();
-            heap.push(Reverse((sc, i as u32)));
-        }
-    }
-    let mut v: Vec<(ScoreF, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
-    v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-    v.into_iter().map(|(_, i)| i).collect()
-}
-
-/// Asymmetric scan, optional f32 rerank (c=0 → take the asym top-k directly).
-pub fn knn_asym_rerank_batch(
-    bbase: &QuantBinary,
-    fbase: &Vectors,
-    fqueries: &Vectors,
-    k: usize,
-    c: usize,
-) -> Vec<Vec<u32>> {
-    (0..fqueries.len())
-        .into_par_iter()
-        .map(|q| {
-            if c == 0 {
-                knn_asym(bbase, fqueries.row(q), k)
-            } else {
-                let cands = knn_asym(bbase, fqueries.row(q), c.max(k));
-                rerank(fbase, fqueries.row(q), &cands, k)
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn asym_beats_symmetric_ranking() {
-        // Query close to vec 0; asym (keeps query magnitude) ranks it first.
-        let base = Vectors {
-            data: vec![0.9, 0.1, -0.9, 0.1, 0.1, 0.9, -0.1, -0.9],
-            dim: 2,
-        };
-        let q = Vectors { data: vec![1.0, 0.2], dim: 2 };
-        let bb = QuantBinary::from_f32(&base);
-        let got = knn_asym(&bb, q.row(0), 1);
-        // vec 0 = (0.9,0.1) -> bits (1,1); query (1.0,0.2) set-bit sum = 1.2 (max)
-        assert_eq!(got[0], 0);
-    }
 
     #[test]
     fn binary_rerank_recovers_exact() {

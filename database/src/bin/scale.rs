@@ -77,12 +77,12 @@ fn main() {
             let qcodes = QuantBinary { data: qd, words, dim: args.bits };
 
             // warmup
-            let _ = knn_binary_funnel_tiled(&codes, &qcodes, &empty, &empty, args.k, 0, tile, false, false);
+            let _ = knn_binary_funnel_tiled(&codes, &qcodes, &empty, &empty, args.k, 0, tile);
             // measure: accumulate >= min_secs
             let mut iters = 0u32;
             let t = Instant::now();
             loop {
-                let _ = knn_binary_funnel_tiled(&codes, &qcodes, &empty, &empty, args.k, 0, tile, false, false);
+                let _ = knn_binary_funnel_tiled(&codes, &qcodes, &empty, &empty, args.k, 0, tile);
                 iters += 1;
                 if t.elapsed().as_secs_f64() >= args.min_secs {
                     break;

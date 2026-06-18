@@ -89,16 +89,6 @@ struct Args {
     #[arg(long, default_value_t = 64)]
     block: usize,
 
-    /// Rerank doc store width for the binary funnel: "f32" or "bf16" (half the
-    /// gather bandwidth, query kept full precision).
-    #[arg(long, default_value = "f32")]
-    rerank_store: String,
-
-    /// Rerank tier precision for the binary funnel: "f32" (exact, 3.9 GB store) or
-    /// "i8" (int8 dot, ~4x smaller store + gather).
-    #[arg(long, default_value = "f32")]
-    rerank_quant: String,
-
     /// Intra-query parallelism in the LATENCY pass: scan one query across N rayon
     /// shards (0/1 = single-threaded). Cuts single-query latency; throughput trade.
     #[arg(long, default_value_t = 0)]
@@ -107,15 +97,6 @@ struct Args {
     /// Parallelize the rerank rescore in the LATENCY pass (pairs with query-threads).
     #[arg(long, default_value_t = false)]
     rerank_par: bool,
-
-    /// Tiled binary scan kernel: register-tiled (doc-word outer, scalar popcount)
-    /// instead of per-query VPOPCNTDQ. Only affects --batch>1 binary runs.
-    #[arg(long, default_value_t = false)]
-    tile_rt: bool,
-
-    /// Software-prefetch upcoming rerank candidate rows (tiled binary path).
-    #[arg(long, default_value_t = false)]
-    rerank_pf: bool,
 
     /// Use only the first N base vectors (0 = all). Shrinks the working set so a
     /// sweep can find the cache->DRAM crossover. Recall is N/A when subsetting
@@ -206,22 +187,19 @@ fn main() -> std::io::Result<()> {
     // Build int8-quantized base + query set once if requested.
     let quant_i8 = args.quant == "i8";
     let quant_bin = args.quant == "binary";
-    let quant_asym = args.quant == "asym";
     let quant_rabitq = args.quant == "rabitq";
     let quant_ads = args.quant == "adsampling";
     let quant_pdx = args.quant == "pdx";
     let quant_pdxads = args.quant == "pdxads";
-    let quant_binads = args.quant == "binads"; // binary scan + ADSampling rerank (rotated)
     let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
     let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
-    // binary docs are needed by both symmetric ("binary") and asymmetric ("asym").
     let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
     // RaBitQ/ADSampling require a rotation; default rounds if none requested.
     let rot_rounds = if args.rotate > 0 {
         args.rotate
     } else if quant_ads || quant_pdxads {
         3
-    } else if quant_rabitq || quant_binads {
+    } else if quant_rabitq {
         2
     } else {
         0
@@ -231,11 +209,8 @@ fn main() -> std::io::Result<()> {
         Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
         None => quant::QuantBinary::from_f32_prefix(v, bits),
     };
-    let bbase = if quant_bin || quant_asym || quant_binads { Some(mk(&base)) } else { None };
-    let bquery = if quant_bin || quant_binads { Some(mk(&qps_set)) } else { None };
-    // binads rerank tier: rotated f32 base + query (L2 preserved under rotation).
-    let rfbase = if quant_binads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
-    let rqps_f = if quant_binads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
+    let bbase = if quant_bin { Some(mk(&base)) } else { None };
+    let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
     let rb = if quant_rabitq { Some(quant::RaBitQ::build(&base, rot.as_ref().unwrap(), bits)) } else { None };
     // ADSampling: rotate base + query set so partial distances are unbiased.
     let rbase = if quant_ads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
@@ -252,11 +227,6 @@ fn main() -> std::io::Result<()> {
         "heap" => quant::BinSel::Heap,
         other => panic!("unknown --select {other:?} (want heap|count)"),
     };
-    // Optional int8 rerank tier for the binary funnel (4x smaller than f32).
-    let rr_i8 = quant_bin && args.rerank > 0 && args.rerank_quant == "i8";
-    let i8b = if rr_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
-    let i8q = if rr_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
-    let bf16base = if quant_bin && args.rerank_store == "bf16" { Some(quant::Bf16Vectors::from_f32(&base)) } else { None };
 
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
@@ -267,26 +237,13 @@ fn main() -> std::io::Result<()> {
             search::knn_pdx_batch(px, &qps_set, args.k)
         } else if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
             search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
-        } else if let (Some(bb), Some(bq), Some(rf), Some(rqf)) = (&bbase, &bquery, &rfbase, &rqps_f) {
-            if args.batch > 1 {
-                quant::knn_binary_funnel_tiled_ads(bb, bq, rf, rqf, args.k, args.rerank, args.batch, args.eps0, args.delta)
-            } else {
-                quant::knn_binary_funnel_ads_batch(bb, bq, rf, rqf, args.k, args.rerank, args.eps0, args.delta)
-            }
         } else if let Some(rb) = &rb {
             quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
         } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
             quant::knn_i8_batch(qb, qq, args.k)
-        } else if quant_asym {
-            // asymmetric: full-precision query (qps_set) vs binary docs (bbase)
-            quant::knn_asym_rerank_batch(bbase.as_ref().unwrap(), &base, &qps_set, args.k, args.rerank)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
-            if let Some(bf) = &bf16base {
-                quant::knn_binary_funnel_tiled_bf16(bb, bq, bf, &qps_set, args.k, args.rerank, args.batch)
-            } else if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
-                quant::knn_binary_funnel_i8_batch(bb, bq, ib, iq, args.k, args.rerank, bin_sel)
-            } else if args.batch > 1 {
-                quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch, args.tile_rt, args.rerank_pf)
+            if args.batch > 1 {
+                quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch)
             } else {
                 quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
             }
@@ -358,23 +315,6 @@ fn main() -> std::io::Result<()> {
             let r = quant::knn_i8(qb, qq.row(q.min(qq.len() - 1)), args.k);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);
-        } else if quant_asym {
-            let bb = bbase.as_ref().unwrap();
-            let r = if args.rerank > 0 {
-                let cands = quant::knn_asym(bb, queries_all.row(q), args.rerank.max(args.k));
-                quant::rerank(&base, queries_all.row(q), &cands, args.k)
-            } else {
-                quant::knn_asym(bb, queries_all.row(q), args.k)
-            };
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
-        } else if let (Some(bb), Some(bq), Some(rf)) = (&bbase, &bquery, &rfbase) {
-            let qi = q.min(bq.len() - 1);
-            let cands = quant::knn_binary(bb, bq.row(qi), args.rerank.max(args.k));
-            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
-            let r = quant::rerank_adsampling(rf, &qr, &cands, args.k, args.eps0, args.delta);
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
@@ -383,11 +323,7 @@ fn main() -> std::io::Result<()> {
                 } else {
                     quant::knn_binary_sel(bb, bq.row(qi), args.rerank.max(args.k), bin_sel)
                 };
-                if let Some(bf) = &bf16base {
-                    quant::rerank_bf16(bf, queries_all.row(q), &cands, args.k)
-                } else if let (Some(ib), Some(iq)) = (&i8b, &i8q) {
-                    quant::rerank_i8(ib, iq.row(qi), &cands, args.k)
-                } else if args.rerank_par {
+                if args.rerank_par {
                     quant::rerank_par(&base, queries_all.row(q), &cands, args.k)
                 } else {
                     quant::rerank(&base, queries_all.row(q), &cands, args.k)

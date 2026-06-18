@@ -171,7 +171,7 @@ fn main() -> std::io::Result<()> {
             let mut best_qps = 0.0;
             for _ in 0..args.reps {
                 let t = Instant::now();
-                let _ = quant::knn_binary_funnel_tiled(&bbase, &bqueries, &cell, &qsub, args.k, c, args.tile, false, false);
+                let _ = quant::knn_binary_funnel_tiled(&bbase, &bqueries, &cell, &qsub, args.k, c, args.tile);
                 let qps = nq as f64 / t.elapsed().as_secs_f64();
                 if qps > best_qps {
                     best_qps = qps;
