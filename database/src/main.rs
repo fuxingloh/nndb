@@ -77,6 +77,11 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     rotate: usize,
 
+    /// Residual encoding (binary only): subtract the base centroid before forming
+    /// the codes. Stage-1 only — rerank stays exact on raw vectors (history 046).
+    #[arg(long, default_value_t = false)]
+    residual: bool,
+
     /// Intra-query parallelism in the LATENCY pass: scan one query across N rayon
     /// shards (0/1 = single-threaded). Cuts single-query latency; throughput trade.
     #[arg(long, default_value_t = 0)]
@@ -181,8 +186,15 @@ fn main() -> std::io::Result<()> {
         Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
         None => quant::QuantBinary::from_f32_prefix(v, bits),
     };
-    let bbase = if quant_bin { Some(mk(&base)) } else { None };
-    let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
+    // Residual encoding: form the stage-1 codes from (vector − base centroid). The
+    // raw `base`/`qps_set` are kept for the exact rerank, so only selection changes.
+    let centroid = if quant_bin && args.residual { Some(quant::centroid(&base)) } else { None };
+    let mk_codes = |v: &fvecs::Vectors| match &centroid {
+        Some(c) => mk(&quant::subtract_centroid(v, c)),
+        None => mk(v),
+    };
+    let bbase = if quant_bin { Some(mk_codes(&base)) } else { None };
+    let bquery = if quant_bin { Some(mk_codes(&qps_set)) } else { None };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,

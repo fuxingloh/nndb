@@ -1,0 +1,100 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "7727e08",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "config": "binary funnel + rotation x2 + RESIDUAL (centroid-subtracted codes) + tiling tile=8, Cohere v3 1M x 1024, in-RAM, reps=5",
+ "note": "Residual wired into the main funnel (--residual). Stacked recall/latency/QPS. KEY: residual is a FREE recall win at full bits (1024b C=1000: 0.9960->0.9986, identical QPS/latency), shifting the whole frontier out past 038 (0.9968@922). Fewer bits is primarily a LATENCY lever in the batched engine (768b cuts p50 10.6->7.3ms; 512b ->4.2ms) - NOT the ~1.8x QPS I projected, because tiling already amortizes the scan and the C-rerank is a real fixed cost (dropping C 1000->500 alone gives +9% QPS). So fewer bits = big latency + recall-per-byte win; smaller C = QPS. Best balanced point I (1024b C=500): 0.9952 @ 963 QPS @ 8.0ms - beats 038 on QPS AND latency at ~same recall.",
+ "points": [
+  {
+   "id": "A",
+   "bits": 1024,
+   "c": 1000,
+   "residual": false,
+   "recall": 0.996,
+   "qps": 882.0,
+   "p50_ms": 10.58
+  },
+  {
+   "id": "B",
+   "bits": 1024,
+   "c": 1000,
+   "residual": true,
+   "recall": 0.9986,
+   "qps": 882.8,
+   "p50_ms": 10.65
+  },
+  {
+   "id": "I",
+   "bits": 1024,
+   "c": 500,
+   "residual": true,
+   "recall": 0.9952,
+   "qps": 963.1,
+   "p50_ms": 8.05
+  },
+  {
+   "id": "C",
+   "bits": 768,
+   "c": 1000,
+   "residual": true,
+   "recall": 0.9936,
+   "qps": 819.3,
+   "p50_ms": 7.28
+  },
+  {
+   "id": "G",
+   "bits": 768,
+   "c": 500,
+   "residual": true,
+   "recall": 0.9816,
+   "qps": 884.0,
+   "p50_ms": 4.41
+  },
+  {
+   "id": "D",
+   "bits": 512,
+   "c": 1000,
+   "residual": true,
+   "recall": 0.9637,
+   "qps": 922.1,
+   "p50_ms": 4.2
+  },
+  {
+   "id": "F",
+   "bits": 512,
+   "c": 2000,
+   "residual": true,
+   "recall": 0.9835,
+   "qps": 775.4,
+   "p50_ms": 5.54
+  },
+  {
+   "id": "H",
+   "bits": 512,
+   "c": 500,
+   "residual": true,
+   "recall": 0.9296,
+   "qps": 978.4,
+   "p50_ms": 3.57
+  },
+  {
+   "id": "E",
+   "bits": 512,
+   "c": 1000,
+   "residual": false,
+   "recall": 0.9297,
+   "qps": 907.6,
+   "p50_ms": 4.31
+  }
+ ],
+ "best": {
+  "max_recall": "B: 0.9986 @ 883 QPS, 10.6ms",
+  "balanced": "I: 0.9952 @ 963 QPS, 8.0ms",
+  "low_latency_high_recall": "C: 0.9936 @ 819 QPS, 7.3ms"
+ },
+ "residual_lift": {
+  "1024b_C1000": "+0.26pts free (0.9960->0.9986)",
+  "512b_C1000": "+3.4pts (0.9297->0.9637, E->D)"
+ },
+ "not_included": "adaptive-C (048, marginal in-RAM, matters on disk), carousel serving (039-041, stacks for burst latency), disk hybrid (045, 32x less RAM) - all orthogonal add-ons."
+}

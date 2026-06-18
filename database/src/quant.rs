@@ -90,6 +90,36 @@ pub fn rotate_vectors(v: &Vectors, rot: &Rotation) -> Vectors {
     Vectors { data, dim }
 }
 
+/// Mean vector over all rows (the cell centroid). Used for residual encoding:
+/// inside one IVF cell, vectors cluster around the centroid, so subtracting it
+/// before sign-binarization sharpens the codes (history 046).
+pub fn centroid(v: &Vectors) -> Vec<f32> {
+    let dim = v.dim;
+    let mut c = vec![0f64; dim];
+    for i in 0..v.len() {
+        let r = v.row(i);
+        for d in 0..dim {
+            c[d] += r[d] as f64;
+        }
+    }
+    let n = v.len().max(1) as f64;
+    c.iter().map(|x| (x / n) as f32).collect()
+}
+
+/// Subtract `c` from every row (parallel) → residual vectors. Stage-1 only; rerank
+/// and ground truth stay on the raw vectors.
+pub fn subtract_centroid(v: &Vectors, c: &[f32]) -> Vectors {
+    let dim = v.dim;
+    let mut data = vec![0f32; v.data.len()];
+    data.par_chunks_mut(dim).enumerate().for_each(|(i, out)| {
+        let r = v.row(i);
+        for d in 0..dim {
+            out[d] = r[d] - c[d];
+        }
+    });
+    Vectors { data, dim }
+}
+
 /// Sign-bit binary vectors, packed into u64 words. For angular/cosine,
 /// agreement of sign bits approximates similarity → rank by *min* Hamming.
 pub struct QuantBinary {
