@@ -1,0 +1,51 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "PENDING",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, AVX-512 VPOPCNTDQ, L2 2MB/core, L3 480MB)",
+ "experiment": "single-thread Hamming-kernel microbench (src/bin/simdbench.rs), 1024-bit codes. Safe/stable autovectorization-hint variants vs the current count_ones loop. In-L2 (4096 docs=512KB, isolates compute) and at-scale (200k docs=25MB, memory pressure).",
+ "note": "SIMD step 1 (safe hints). count_ones already autovectorizes to VPOPCNTDQ; safe hints (chunks_exact8, iter zip sum) are at PARITY (no gain). manual_acc4 (4 hand accumulators) is 3x SLOWER - reconfirms 012/023 on AVX-512 (hand-splitting defeats VPOPCNTDQ). Doc-level ILP (interleave4: 4 independent full-width Hammings in flight) wins +23% IN-CACHE (0.289->0.357 Gcmp/s) but ~0% at scale (0.230->0.233) - and the tiled funnel ALREADY captures that ILP (tile of T queries = T independent Hammings per doc). At deployment scale the scan is MEMORY-BANDWIDTH-bound, not popcount-bound (single-thread 0.29 in-L2 -> 0.23 in-DRAM; 047 8-core aggregate 0.14/core = BW contention). Conclusion: explicit core::simd/unsafe SIMD on the scan has no headroom at scale; the lever is fewer bytes, not faster popcount. Closes the parked SIMD question FOR THE SCAN.",
+ "in_l2_512kb": [
+  {
+   "variant": "baseline_count_ones",
+   "gcmp_per_s": 0.289
+  },
+  {
+   "variant": "iter_zip_sum",
+   "gcmp_per_s": 0.294
+  },
+  {
+   "variant": "chunks_exact8",
+   "gcmp_per_s": 0.282
+  },
+  {
+   "variant": "manual_acc4_012loser",
+   "gcmp_per_s": 0.092
+  },
+  {
+   "variant": "interleave4_ilp",
+   "gcmp_per_s": 0.357
+  }
+ ],
+ "at_scale_25mb": [
+  {
+   "variant": "baseline_count_ones",
+   "gcmp_per_s": 0.23
+  },
+  {
+   "variant": "iter_zip_sum",
+   "gcmp_per_s": 0.23
+  },
+  {
+   "variant": "chunks_exact8",
+   "gcmp_per_s": 0.228
+  },
+  {
+   "variant": "manual_acc4_012loser",
+   "gcmp_per_s": 0.091
+  },
+  {
+   "variant": "interleave4_ilp",
+   "gcmp_per_s": 0.233
+  }
+ ]
+}
