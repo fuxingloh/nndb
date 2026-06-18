@@ -55,6 +55,12 @@ struct Args {
     /// Worker threads (0 = CPU cores).
     #[arg(long, default_value_t = 0)]
     workers: usize,
+
+    /// Fan-out F for --mode grouped: F workers cooperate on each query (revolution
+    /// = N/F), in G = workers/F independent groups. F=1 packs (max throughput);
+    /// F=workers fully shards (min latency).
+    #[arg(long, default_value_t = 1)]
+    fan: usize,
 }
 
 struct Job {
@@ -425,6 +431,132 @@ fn run_sharded(
     );
 }
 
+fn group_coordinator(
+    coord_rx: Receiver<CoordMsg>,
+    worker_txs: Vec<mpsc::Sender<(Arc<Comp>, Arc<Vec<u64>>)>>,
+    seats: usize,
+    fan: usize,
+) {
+    use std::collections::VecDeque;
+    let mut inflight = 0usize;
+    let mut pending: VecDeque<Job> = VecDeque::new();
+    let mut draining = false;
+    loop {
+        while inflight < seats {
+            if let Some(j) = pending.pop_front() {
+                let comp = Arc::new(Comp {
+                    partials: Mutex::new(Vec::new()),
+                    remaining: std::sync::atomic::AtomicUsize::new(fan),
+                    arrival: j.arrival,
+                    qf: j.qf.clone(),
+                });
+                for ws in &worker_txs {
+                    ws.send((comp.clone(), j.qbin.clone())).ok();
+                }
+                inflight += 1;
+            } else {
+                break;
+            }
+        }
+        if draining && pending.is_empty() && inflight == 0 {
+            break;
+        }
+        match coord_rx.recv() {
+            Ok(CoordMsg::Job(j)) => pending.push_back(j),
+            Ok(CoordMsg::Done) => inflight -= 1,
+            Ok(CoordMsg::Stop) => draining = true,
+            Err(_) => break,
+        }
+    }
+    drop(worker_txs);
+}
+
+/// Generalized carousel: G = workers/fan independent groups, each group shards the
+/// base across `fan` workers (revolution = N/fan) and serves its own queries.
+fn run_grouped(
+    args: &Args,
+    bbase: Arc<quant::QuantBinary>,
+    basef: Arc<fvecs::Vectors>,
+    pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)>,
+    workers: usize,
+) {
+    let fan = args.fan.clamp(1, workers);
+    let g = (workers / fan).max(1);
+    let n = bbase.len();
+    let span = n / fan;
+    let (otx, orx) = mpsc::channel::<f64>();
+    let mut disp_txs = Vec::with_capacity(g);
+    let mut whandles = Vec::new();
+    let mut chandles = Vec::new();
+    for _grp in 0..g {
+        let (coord_tx, coord_rx) = mpsc::channel::<CoordMsg>();
+        let mut worker_txs = Vec::with_capacity(fan);
+        for j in 0..fan {
+            let lo = j * span;
+            let hi = if j == fan - 1 { n } else { (j + 1) * span };
+            let (wtx, wrx) = mpsc::channel::<(Arc<Comp>, Arc<Vec<u64>>)>();
+            worker_txs.push(wtx);
+            let (bb, bf, ct, ot) = (bbase.clone(), basef.clone(), coord_tx.clone(), otx.clone());
+            let (seats, chunk, k, rc) = (args.seats, args.chunk, args.k, args.rerank);
+            whandles.push(thread::spawn(move || {
+                shard_worker(bb, bf, lo, hi, wrx, ct, seats, chunk, k, rc, ot);
+            }));
+        }
+        let seats = args.seats;
+        chandles.push(thread::spawn(move || group_coordinator(coord_rx, worker_txs, seats, fan)));
+        disp_txs.push(coord_tx);
+    }
+    drop(otx);
+
+    let start = Instant::now();
+    let total = args.warmup + args.duration;
+    let warmup_cutoff = Instant::now() + Duration::from_secs_f64(args.warmup);
+    let mut rng = Lcg(0x1234_5678_9abc_def0);
+    let np = pool.len();
+    let mut sent = 0usize;
+    let mut warmup_sent = 0usize;
+    let mut rr = 0usize;
+    while start.elapsed().as_secs_f64() < total {
+        let dt = -rng.unit().ln() / args.rate;
+        thread::sleep(Duration::from_secs_f64(dt));
+        let qi = (rng.next_u64() as usize) % np;
+        let (qb, qf) = (pool[qi].0.clone(), pool[qi].1.clone());
+        if Instant::now() < warmup_cutoff {
+            warmup_sent += 1;
+        }
+        let tx = &disp_txs[rr % g];
+        rr += 1;
+        if tx.send(CoordMsg::Job(Job { qbin: qb, qf, arrival: Instant::now() })).is_err() {
+            break;
+        }
+        sent += 1;
+    }
+    for tx in &disp_txs {
+        tx.send(CoordMsg::Stop).ok();
+    }
+    drop(disp_txs);
+
+    let mut lats: Vec<f64> = orx.iter().collect();
+    for h in chandles {
+        h.join().ok();
+    }
+    for h in whandles {
+        h.join().ok();
+    }
+    let drop_n = warmup_sent.min(lats.len());
+    let measured = lats.split_off(drop_n);
+    let mut s = measured;
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let done = s.len();
+    let thru = done as f64 / args.duration;
+    let mean = if done > 0 { s.iter().sum::<f64>() / done as f64 } else { f64::NAN };
+    println!(
+        "{{\"mode\":\"grouped\",\"fan\":{},\"groups\":{},\"rate\":{:.0},\"seats\":{},\"chunk\":{},\"workers\":{},\"offered\":{},\"completed\":{},\"throughput\":{:.1},\"lat_ms\":{{\"mean\":{:.2},\"p50\":{:.2},\"p95\":{:.2},\"p99\":{:.2},\"max\":{:.2}}}}}",
+        fan, g, args.rate, args.seats, args.chunk, workers, sent, done, thru,
+        mean, pct(&s, 50.0), pct(&s, 95.0), pct(&s, 99.0), pct(&s, 100.0)
+    );
+}
+
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
     let p = &args.prefix;
@@ -451,6 +583,10 @@ fn main() -> std::io::Result<()> {
 
     if args.mode == "sharded" {
         run_sharded(&args, bbase, basef, pool, workers);
+        return Ok(());
+    }
+    if args.mode == "grouped" {
+        run_grouped(&args, bbase, basef, pool, workers);
         return Ok(());
     }
 

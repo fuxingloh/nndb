@@ -1,0 +1,21 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "e44b6a4",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "rerank": 1000, "seats": 8, "chunk": 4096, "workers": 8,
+  "note": "CAPSTONE / production answer for the carousel idea. Generalized fan-out F: F workers cooperate per query (revolution=N/F) in G=workers/F groups. F=1 packs (max throughput), F=8 shards (min latency). Sweep F x load -> the OPTIMAL F DECREASES with load: rate200->F8(4.5ms), 400->F4(6.5ms), 600->F2(11.5ms), 800->F1/2(20ms), 1000->F1(35ms). The optimal-F envelope NEVER cliffs (4.5ms@200 -> 35ms@1000) and beats per-query (017: 12ms then cliff >500). PRODUCTION RULE: F* ~= cores / in-flight-queries (elastic intra-query parallelism) - give each query an equal share of idle cores; spread at low load, pack under load. Idea WORKS; the tunable is fan-out, adapted to load.",
+  "frontier_p50_ms": [
+    {"rate": 200,  "F1": 12.49, "F2": 7.64,  "F4": 5.12,  "F8": 4.51,  "best": "F8"},
+    {"rate": 400,  "F1": 12.29, "F2": 8.04,  "F4": 6.48,  "F8": 8.34,  "best": "F4"},
+    {"rate": 600,  "F1": 14.69, "F2": 11.45, "F4": 11.79, "F8": 872.18,"best": "F2"},
+    {"rate": 800,  "F1": 20.34, "F2": 19.52, "F4": 367.72,"F8": 2520.57,"best": "F1/F2"},
+    {"rate": 1000, "F1": 34.62, "F2": 283.60,"F4": 1538.63,"F8": 4196.63,"best": "F1"}
+  ],
+  "envelope": [
+    {"rate": 200,  "best_F": 8, "p50_ms": 4.51},
+    {"rate": 400,  "best_F": 4, "p50_ms": 6.48},
+    {"rate": 600,  "best_F": 2, "p50_ms": 11.45},
+    {"rate": 800,  "best_F": 1, "p50_ms": 20.34},
+    {"rate": 1000, "best_F": 1, "p50_ms": 34.62}
+  ]
+}
