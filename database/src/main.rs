@@ -51,8 +51,8 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     batch: usize,
 
-    /// Quantization for the scan: "f32" (exact), "i8" (int8 scalar, ~4x smaller),
-    /// or "binary" (1 bit/dim, ~32x smaller, Hamming). Assumes unit-normalized
+    /// Scan mode: "f32" (exact brute-force baseline) or "binary" (the funnel —
+    /// 1 bit/dim Hamming scan + f32 rerank, ~32x smaller). Assumes unit-normalized
     /// vectors (dot == cosine).
     #[arg(long, default_value = "f32")]
     quant: String,
@@ -76,18 +76,6 @@ struct Args {
     /// binary codes (RaBitQ/ITQ). 0 = off. Improves binary-code quality.
     #[arg(long, default_value_t = 0)]
     rotate: usize,
-
-    /// ADSampling pruning confidence constant eps0 (only --quant adsampling).
-    #[arg(long, default_value_t = 2.1)]
-    eps0: f32,
-
-    /// ADSampling incremental batch size in dims (only --quant adsampling).
-    #[arg(long, default_value_t = 32)]
-    delta: usize,
-
-    /// PDX block size (vectors per dimension-major block; only --quant pdx).
-    #[arg(long, default_value_t = 64)]
-    block: usize,
 
     /// Intra-query parallelism in the LATENCY pass: scan one query across N rayon
     /// shards (0/1 = single-threaded). Cuts single-query latency; throughput trade.
@@ -184,19 +172,10 @@ fn main() -> std::io::Result<()> {
         dim: queries_all.dim,
     };
 
-    // Build int8-quantized base + query set once if requested.
+    // Build the binary funnel index if requested ("binary"); else f32 exact baseline.
     let quant_bin = args.quant == "binary";
-    let quant_pdx = args.quant == "pdx";
-    let quant_pdxads = args.quant == "pdxads";
     let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
-    // PDX+ADSampling needs a rotation; default rounds if none requested.
-    let rot_rounds = if args.rotate > 0 {
-        args.rotate
-    } else if quant_pdxads {
-        3
-    } else {
-        0
-    };
+    let rot_rounds = if args.rotate > 0 { args.rotate } else { 0 };
     let rot = if rot_rounds > 0 { Some(quant::Rotation::new(base.dim, rot_rounds, 0x5EED)) } else { None };
     let mk = |v: &fvecs::Vectors| match &rot {
         Some(r) => quant::QuantBinary::from_f32_rotated(v, r, bits),
@@ -204,15 +183,6 @@ fn main() -> std::io::Result<()> {
     };
     let bbase = if quant_bin { Some(mk(&base)) } else { None };
     let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
-    // PDX+ADSampling: rotate the query set so partial distances are unbiased.
-    let rqps = if quant_pdxads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
-    let pdx = if quant_pdx { Some(search::PdxBase::from_vectors(&base, args.block)) } else { None };
-    // PDX built from the rotated base, for ADSampling pruning on the vertical layout.
-    let pdxads = if quant_pdxads {
-        Some(search::PdxBase::from_vectors(&quant::rotate_vectors(&base, rot.as_ref().unwrap()), args.block))
-    } else {
-        None
-    };
     let bin_sel = match args.select.as_str() {
         "count" => quant::BinSel::Count,
         "heap" => quant::BinSel::Heap,
@@ -222,18 +192,12 @@ fn main() -> std::io::Result<()> {
     // --- Throughput pass: repeat R times, discard warmup, take median -------
     let reps = args.reps.max(1);
     let run = || {
-        if let (Some(px), Some(rq)) = (&pdxads, &rqps) {
-            search::knn_pdx_adsampling_batch(px, rq, args.k, args.eps0, args.delta)
-        } else if let Some(px) = &pdx {
-            search::knn_pdx_batch(px, &qps_set, args.k)
-        } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
+        if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             if args.batch > 1 {
                 quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch)
             } else {
                 quant::knn_binary_funnel_batch(bb, bq, &base, &qps_set, args.k, args.rerank, bin_sel)
             }
-        } else if args.batch > 1 {
-            search::knn_batch_tiled(&base, &qps_set, args.k, args.batch)
         } else {
             search::knn_batch(&base, &qps_set, args.k)
         }
@@ -272,16 +236,7 @@ fn main() -> std::io::Result<()> {
     let mut lat_ms: Vec<f64> = Vec::with_capacity(n_lat);
     for q in 0..n_lat {
         let t = Instant::now();
-        if let Some(px) = &pdxads {
-            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
-            let r = search::knn_pdx_adsampling(px, &qr, args.k, args.eps0, args.delta);
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
-        } else if let Some(px) = &pdx {
-            let r = search::knn_pdx(px, queries_all.row(q), args.k);
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
-        } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
+        if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
                 let cands = if args.query_threads > 1 {

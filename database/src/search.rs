@@ -1,9 +1,10 @@
 //! Exact brute-force k-nearest-neighbor search.
 //!
-//! This is the correctness oracle and speed baseline. It scans every base
-//! vector for every query, so recall is always 100% by construction — its job
-//! is to give us the QPS/latency floor that approximate indexes (HNSW, IVF, …)
-//! must beat while staying close to that recall.
+//! This is the correctness oracle and recall=1.0 anchor: it scans every base
+//! vector for every query, so it is what `--write-ground-truth` uses, what recall
+//! is measured against, and what the unit tests check. It is intentionally NOT a
+//! throughput contender — the binary funnel (`quant.rs`) is the engine; this just
+//! defines exactness.
 
 use crate::fvecs::Vectors;
 use rayon::prelude::*;
@@ -103,209 +104,6 @@ pub fn knn_batch(base: &Vectors, queries: &Vectors, k: usize) -> Vec<Vec<u32>> {
         .collect()
 }
 
-/// Bandwidth-amortizing KNN. Same exact result as `knn_batch`, but instead of
-/// re-streaming the whole base once per query, it processes queries in tiles of
-/// `tile`: for each base vector loaded, it computes the distance to all queries
-/// in the tile while that vector is hot in cache. The base is streamed once per
-/// tile (Q/tile streams) instead of once per query (Q streams), so the DRAM
-/// traffic — the bandwidth-bound scan's binding constraint — drops by ~`tile`.
-///
-/// The tile must be small enough that its queries stay resident in L1 while the
-/// base streams past them; ~16–32 is the sweet spot (fits L1, and enough to flip
-/// the scan from memory-bound to compute-bound on typical hardware).
-pub fn knn_batch_tiled(base: &Vectors, queries: &Vectors, k: usize, tile: usize) -> Vec<Vec<u32>> {
-    let tile = tile.max(1);
-    let nq = queries.len();
-
-    let starts: Vec<usize> = (0..nq).step_by(tile).collect();
-    let per_tile: Vec<Vec<Vec<u32>>> = starts
-        .into_par_iter()
-        .map(|start| {
-            let end = (start + tile).min(nq);
-            let b = end - start;
-            let mut heaps: Vec<BinaryHeap<(Dist, u32)>> =
-                (0..b).map(|_| BinaryHeap::with_capacity(k + 1)).collect();
-
-            // Stream the base once; reuse each row across the whole query tile.
-            for n in 0..base.len() {
-                let row = base.row(n);
-                for (qi, q) in (start..end).enumerate() {
-                    let d = Dist(l2_sq(row, queries.row(q)));
-                    let h = &mut heaps[qi];
-                    if h.len() < k {
-                        h.push((d, n as u32));
-                    } else if d < h.peek().unwrap().0 {
-                        h.pop();
-                        h.push((d, n as u32));
-                    }
-                }
-            }
-
-            heaps
-                .into_iter()
-                .map(|h| h.into_sorted_vec().into_iter().map(|(_, i)| i).collect())
-                .collect()
-        })
-        .collect();
-
-    per_tile.into_iter().flatten().collect()
-}
-
-/// PDX (Kuffo & Boncz, SIGMOD 2025): a **dimension-major** block layout. Vectors
-/// are grouped into blocks of `block`; within a block the data is stored
-/// transposed — all vectors' dim 0, then all vectors' dim 1, … So computing
-/// distances for a whole block is a loop over dimensions whose inner loop is over
-/// vectors (multiple-vectors-at-a-time), which autovectorizes cleanly and needs no
-/// per-vector horizontal reduction. The basis for fast pruned scans (033).
-pub struct PdxBase {
-    data: Vec<f32>,
-    n: usize,
-    dim: usize,
-    block: usize,
-}
-
-impl PdxBase {
-    pub fn from_vectors(v: &Vectors, block: usize) -> Self {
-        let n = v.len();
-        let dim = v.dim;
-        let block = block.max(1);
-        let mut data = vec![0f32; n * dim];
-        let mut off = 0;
-        let mut start = 0;
-        while start < n {
-            let bsz = block.min(n - start);
-            for vi in 0..bsz {
-                let row = v.row(start + vi);
-                for d in 0..dim {
-                    data[off + d * bsz + vi] = row[d];
-                }
-            }
-            off += bsz * dim;
-            start += bsz;
-        }
-        PdxBase { data, n, dim, block }
-    }
-    pub fn len(&self) -> usize {
-        self.n
-    }
-}
-
-/// Exact KNN over the PDX layout — dimension-major, multiple-vectors-at-a-time.
-/// Same result as `knn`; the inner per-dimension loop over the block's vectors
-/// autovectorizes and avoids the horizontal reduction of row-major distance.
-pub fn knn_pdx(pdx: &PdxBase, q: &[f32], k: usize) -> Vec<u32> {
-    let dim = pdx.dim;
-    let mut heap: BinaryHeap<(Dist, u32)> = BinaryHeap::with_capacity(k + 1);
-    let mut partial = vec![0f32; pdx.block];
-    let mut off = 0;
-    let mut start = 0;
-    while start < pdx.n {
-        let bsz = pdx.block.min(pdx.n - start);
-        let part = &mut partial[..bsz];
-        part.iter_mut().for_each(|p| *p = 0.0);
-        for d in 0..dim {
-            let qd = q[d];
-            let col = &pdx.data[off + d * bsz..off + d * bsz + bsz];
-            for v in 0..bsz {
-                let df = qd - col[v];
-                part[v] += df * df;
-            }
-        }
-        for v in 0..bsz {
-            let dd = Dist(part[v]);
-            let idx = (start + v) as u32;
-            if heap.len() < k {
-                heap.push((dd, idx));
-            } else if dd < heap.peek().unwrap().0 {
-                heap.pop();
-                heap.push((dd, idx));
-            }
-        }
-        off += bsz * dim;
-        start += bsz;
-    }
-    heap.into_sorted_vec().into_iter().map(|(_, i)| i).collect()
-}
-
-pub fn knn_pdx_batch(pdx: &PdxBase, queries: &Vectors, k: usize) -> Vec<Vec<u32>> {
-    (0..queries.len())
-        .into_par_iter()
-        .map(|q| knn_pdx(pdx, queries.row(q), k))
-        .collect()
-}
-
-/// ADSampling pruning ON the PDX layout (the combination PDX is built for). For
-/// each block we accumulate partial squared distances dimension-by-dimension over
-/// the *alive* vectors; after each batch we drop vectors whose partial already
-/// exceeds the k-th best by the ADSampling margin, so they skip their remaining
-/// dims. The dimension-major layout keeps the alive-vector inner loop tight while
-/// pruning shrinks the work — recovering the speedup that early termination loses
-/// on a row-major layout (031). `q` must be RANDOM-ROTATED.
-pub fn knn_pdx_adsampling(pdx: &PdxBase, q: &[f32], k: usize, eps0: f32, delta: usize) -> Vec<u32> {
-    let dim = pdx.dim;
-    let step = delta.max(1);
-    let mut heap: BinaryHeap<(Dist, u32)> = BinaryHeap::with_capacity(k + 1);
-    let mut partial = vec![0f32; pdx.block];
-    let mut alive: Vec<u32> = Vec::with_capacity(pdx.block);
-    let mut off = 0;
-    let mut start = 0;
-    while start < pdx.n {
-        let bsz = pdx.block.min(pdx.n - start);
-        partial[..bsz].iter_mut().for_each(|p| *p = 0.0);
-        alive.clear();
-        alive.extend(0..bsz as u32);
-        let full = heap.len() >= k;
-        let thr = if full { heap.peek().unwrap().0 .0 } else { f32::INFINITY };
-        let mut i = 0;
-        while i < dim && !alive.is_empty() {
-            let end = (i + step).min(dim);
-            for d in i..end {
-                let qd = q[d];
-                let col = &pdx.data[off + d * bsz..off + d * bsz + bsz];
-                for &v in &alive {
-                    let vv = v as usize;
-                    let df = qd - col[vv];
-                    partial[vv] += df * df;
-                }
-            }
-            i = end;
-            if full && i < dim {
-                let fi = i as f32;
-                let t = 1.0 + eps0 / fi.sqrt();
-                let bound = thr * (fi / dim as f32) * t * t;
-                alive.retain(|&v| partial[v as usize] < bound);
-            }
-        }
-        for &v in &alive {
-            let d = Dist(partial[v as usize]);
-            let idx = start as u32 + v;
-            if heap.len() < k {
-                heap.push((d, idx));
-            } else if d < heap.peek().unwrap().0 {
-                heap.pop();
-                heap.push((d, idx));
-            }
-        }
-        off += bsz * dim;
-        start += bsz;
-    }
-    heap.into_sorted_vec().into_iter().map(|(_, i)| i).collect()
-}
-
-/// Parallel PDX+ADSampling over a (rotated) query set.
-pub fn knn_pdx_adsampling_batch(
-    pdx: &PdxBase,
-    rqueries: &Vectors,
-    k: usize,
-    eps0: f32,
-    delta: usize,
-) -> Vec<Vec<u32>> {
-    (0..rqueries.len())
-        .into_par_iter()
-        .map(|q| knn_pdx_adsampling(pdx, rqueries.row(q), k, eps0, delta))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,52 +116,14 @@ mod tests {
 
     #[test]
     fn returns_k_nearest_ascending() {
-        // 1-D points at 0,1,2,3,4; query at 0 -> nearest are 0,1,2.
-        let base = vecs(&[&[0.0], &[4.0], &[1.0], &[3.0], &[2.0]]);
-        let got = knn(&base, &[0.0], 3);
-        assert_eq!(got, vec![0, 2, 4]); // indices of points 0.0, 1.0, 2.0
-    }
-
-    #[test]
-    fn pdx_matches_exact() {
         let base = vecs(&[
             &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
             &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
         ]);
         let q = [0.1, 0.1];
-        let pdx = PdxBase::from_vectors(&base, 3); // 8 rows, block 3 -> 3,3,2
-        for k in 1..=4 {
-            assert_eq!(knn_pdx(&pdx, &q, k), knn(&base, &q, k), "k={k}");
-        }
-    }
-
-    #[test]
-    fn pdx_adsampling_conservative_matches_exact() {
-        let base = vecs(&[
-            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
-            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
-        ]);
-        let q = [0.1, 0.1];
-        let pdx = PdxBase::from_vectors(&base, 3);
-        for k in 1..=4 {
-            // eps0 huge => never prunes => exact.
-            assert_eq!(knn_pdx_adsampling(&pdx, &q, k, 100.0, 1), knn(&base, &q, k), "k={k}");
-        }
-    }
-
-    #[test]
-    fn tiled_matches_per_query() {
-        // Batched scan must return identical results to the per-query scan.
-        let base = vecs(&[
-            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
-            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
-        ]);
-        let queries = vecs(&[&[0.0, 0.0], &[5.0, 5.0], &[1.4, 0.1], &[3.1, 2.9], &[0.1, 0.1]]);
-        for &tile in &[1usize, 2, 3, 5, 100] {
-            let plain = knn_batch(&base, &queries, 3);
-            let tiled = knn_batch_tiled(&base, &queries, 3, tile);
-            assert_eq!(plain, tiled, "tile={tile}");
-        }
+        let got = knn(&base, &q, 3);
+        // ascending by squared distance: idx4 (0.2,0.1)=0.01, idx0 (0,0)=0.02, idx1 (1,1)=1.62
+        assert_eq!(got, vec![4, 0, 1]);
     }
 
     #[test]
