@@ -1,6 +1,6 @@
 {
  "date": "2026-06-18T00:00:00Z",
- "commit": "PENDING",
+ "commit": "d4ad6db",
  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU, 15GB RAM, EBS gp3 root nvme)",
  "dataset": "cohere-v3 1000000 x 1024 f32 (4096 MB), cosine",
  "storage": "EBS gp3 over nvme; measured cold sequential read = 135 MB/s (cat 4.096 GB in 30.24 s)",
