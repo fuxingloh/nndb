@@ -1,0 +1,7 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "PENDING",
+  "type": "scope-note",
+  "machine": "n/a (architecture entry, no measurement)",
+  "dataset": "n/a",
+  "note": "Scoping entry, no perf numbers. Answers questions/IVF.md: IVF-the-router is out of scope and not built here; IVF is the PREMISE that justifies the engine (without it, a query scans all N -> the ~100ms brute-force number from 001; IVF narrows to ~sqrt(N) cells x nprobe so the within-cell exact scan is viable). Our scan is the kernel that runs nprobe times per query. In-scope seam questions logged (not resolved): (1) cell sizing sets scan length N; (2) residual encoding - does rotation+binary funnel gain recall on residuals vs raw; (3) per-cell top-C and cross-cell merge width. questions/IVF.md removed."
+}
