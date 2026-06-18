@@ -1,0 +1,74 @@
+{
+ "date": "2026-06-18T00:00:00Z",
+ "commit": "PENDING",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU, 15GB RAM, EBS gp3 root nvme)",
+ "dataset": "cohere-v3 1000000 x 1024 f32 (4096 MB), cosine",
+ "storage": "EBS gp3 over nvme; measured cold sequential read = 135 MB/s (cat 4.096 GB in 30.24 s)",
+ "method": "single-thread serial per-query latency. first_ms = coldest (nothing cached). cold = page cache dropped (drop_caches) before run; warm = re-run cached. c=200 rerank width, rotate x2.",
+ "note": "ECONOMICS of disk-resident vectors. Exact (matrix) search touches all N/query -> from cold disk = 30.2 s/query (4GB/135MBps), confirming it MUST be in RAM. The binary funnel only scans 128MB codes + reads C=200 vectors/query, so the 4GB f32 can live on disk: hybrid (codes in RAM, f32 on disk) = 92 ms cold / 11.5 ms warm at 128MB resident RAM (32x less). Funnel disk cost is O(C) random reads INDEPENDENT of N; exact disk cost is O(N) the whole dataset. That is the scale-out unlock: shrink RAM ~32x, and if the working set fits page cache it is free (= full-RAM speed).",
+ "runs": [
+  {
+   "config": "exact / RAM",
+   "ram_mb": 4096,
+   "p50_ms": 708.9,
+   "p99_ms": 720.0,
+   "first_ms": 683.9,
+   "serial_qps": 1.4,
+   "note": "full f32 scan in RAM; bandwidth-bound (~4GB read/query)"
+  },
+  {
+   "config": "exact / disk COLD",
+   "ram_mb": 0,
+   "p50_ms": null,
+   "p99_ms": 30233.8,
+   "first_ms": 30233.8,
+   "serial_qps": 0.1,
+   "note": "nothing in RAM: reads whole 4GB/query = 30.2s (matches 4096MB/135MBps)"
+  },
+  {
+   "config": "exact / disk warm",
+   "ram_mb": 0,
+   "p50_ms": 702.9,
+   "p99_ms": 716.6,
+   "first_ms": 3422.0,
+   "serial_qps": 1.4,
+   "note": "once page-cached == RAM speed"
+  },
+  {
+   "config": "funnel / RAM",
+   "ram_mb": 4224,
+   "p50_ms": 11.67,
+   "p99_ms": 12.19,
+   "first_ms": 12.98,
+   "serial_qps": 68.9,
+   "note": "codes+f32 in RAM (in-memory winner); 60x faster than exact-RAM"
+  },
+  {
+   "config": "funnel / hybrid COLD",
+   "ram_mb": 128,
+   "p50_ms": 92.4,
+   "p99_ms": 141.9,
+   "first_ms": 73.5,
+   "serial_qps": 10.7,
+   "note": "codes in RAM, 200 f32 reads from COLD disk (~0.4ms/random read serial)"
+  },
+  {
+   "config": "funnel / hybrid warm",
+   "ram_mb": 128,
+   "p50_ms": 11.5,
+   "p99_ms": 12.3,
+   "first_ms": 13.3,
+   "serial_qps": 69.3,
+   "note": "f32 now page-cached -> == full RAM, at 128MB committed"
+  },
+  {
+   "config": "funnel / all-disk warm",
+   "ram_mb": 0,
+   "p50_ms": 10.2,
+   "p99_ms": 11.9,
+   "first_ms": 16.9,
+   "serial_qps": 96.2,
+   "note": "codes+f32 mmap, cached -> RAM speed at ~0 committed RAM"
+  }
+ ]
+}
