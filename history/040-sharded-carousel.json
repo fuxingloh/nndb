@@ -1,0 +1,22 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "d3305b9",
+  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+  "dataset": "cohere-v3 wikipedia, 1000000 x 1024, cosine (unit-norm)",
+  "k": 10, "rerank": 1000, "chunk": 4096, "workers": 8,
+  "note": "Sharded carousel: docs split across workers, a query rides ALL shards in parallel (revolution = N/8), partial heaps merged. Cuts the latency FLOOR 8x: p50 4.3ms @ rate 100 (vs per-worker carousel 77ms, per-query 12ms) - it's dynamic intra-query parallelism (021). BUT lower capacity: cliffs at ~550-600 QPS (1052ms @600). More seats does NOT help (compute/popcount-bound at saturation: 751 throughput flat for seats 8->128, latency rises 2790->3363ms). So spreading each query across all cores minimizes latency but limits cross-query concurrency -> lower throughput. Opposite sweet spot to the per-worker carousel (039: floor 30-77ms, capacity >800).",
+  "rate_sweep_seats8": [
+    {"rate": 100,  "throughput": 97.0,  "p50_ms": 4.30,   "p99_ms": 6.89},
+    {"rate": 200,  "throughput": 190.2, "p50_ms": 4.56,   "p99_ms": 10.02},
+    {"rate": 400,  "throughput": 385.2, "p50_ms": 9.24,   "p99_ms": 47.20},
+    {"rate": 600,  "throughput": 572.7, "p50_ms": 1052.00,"p99_ms": 1774.78},
+    {"rate": 800,  "throughput": 751.3, "p50_ms": 2760.70,"p99_ms": 4515.43},
+    {"rate": 1000, "throughput": 935.5, "p50_ms": 4487.89,"p99_ms": 7483.45}
+  ],
+  "seats_sweep_rate800": [
+    {"seats": 8,   "throughput": 751.2, "p50_ms": 2789.67},
+    {"seats": 16,  "throughput": 751.0, "p50_ms": 2799.45},
+    {"seats": 32,  "throughput": 751.2, "p50_ms": 3000.89},
+    {"seats": 64,  "throughput": 751.7, "p50_ms": 3198.07},
+    {"seats": 128, "throughput": 752.7, "p50_ms": 3362.66}
+  ]
+}

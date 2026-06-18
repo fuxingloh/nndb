@@ -195,12 +195,234 @@ fn perquery_worker(
     }
 }
 
+// ---- Sharded carousel: docs split across workers; a query rides ALL shards in
+// parallel (revolution = N/workers docs), partial heaps merged on completion. ----
+
+struct Comp {
+    partials: Mutex<Vec<Vec<(u32, u32)>>>,
+    remaining: std::sync::atomic::AtomicUsize,
+    arrival: Instant,
+    qf: Arc<Vec<f32>>,
+}
+
+enum CoordMsg {
+    Job(Job),
+    Done,
+    Stop,
+}
+
+struct ShardAq {
+    comp: Arc<Comp>,
+    qbin: Arc<Vec<u64>>,
+    heap: BinaryHeap<(u32, u32)>,
+    remaining: isize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shard_worker(
+    bbase: Arc<quant::QuantBinary>,
+    basef: Arc<fvecs::Vectors>,
+    lo: usize,
+    hi: usize,
+    rx: Receiver<(Arc<Comp>, Arc<Vec<u64>>)>,
+    coord: mpsc::Sender<CoordMsg>,
+    seats: usize,
+    chunk: usize,
+    k: usize,
+    rerank_c: usize,
+    out: mpsc::Sender<f64>,
+) {
+    let want = rerank_c.max(k);
+    let span = hi - lo;
+    let mut active: Vec<ShardAq> = Vec::with_capacity(seats);
+    let mut cursor = lo;
+    let mut disconnected = false;
+    loop {
+        while active.len() < seats {
+            match rx.try_recv() {
+                Ok((comp, qbin)) => active.push(ShardAq {
+                    comp,
+                    qbin,
+                    heap: BinaryHeap::with_capacity(want + 1),
+                    remaining: span as isize,
+                }),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if active.is_empty() {
+            if disconnected {
+                return;
+            }
+            match rx.recv_timeout(Duration::from_millis(2)) {
+                Ok((comp, qbin)) => active.push(ShardAq {
+                    comp,
+                    qbin,
+                    heap: BinaryHeap::with_capacity(want + 1),
+                    remaining: span as isize,
+                }),
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            continue;
+        }
+        let end = (cursor + chunk).min(hi);
+        for d in cursor..end {
+            let doc = bbase.row(d);
+            for aq in active.iter_mut() {
+                let h = quant::hamming(&aq.qbin, doc);
+                if aq.heap.len() < want {
+                    aq.heap.push((h, d as u32));
+                } else if h < aq.heap.peek().unwrap().0 {
+                    aq.heap.pop();
+                    aq.heap.push((h, d as u32));
+                }
+            }
+        }
+        let processed = (end - cursor) as isize;
+        cursor = if end >= hi { lo } else { end };
+        let mut i = 0;
+        while i < active.len() {
+            active[i].remaining -= processed;
+            if active[i].remaining <= 0 {
+                let aq = active.swap_remove(i);
+                let part: Vec<(u32, u32)> = aq.heap.into_iter().collect();
+                let comp = aq.comp;
+                comp.partials.lock().unwrap().push(part);
+                // last shard to finish merges + reranks
+                if comp.remaining.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+                    let mut all: Vec<(u32, u32)> = comp.partials.lock().unwrap().drain(..).flatten().collect();
+                    all.sort_unstable();
+                    let cands: Vec<u32> = all.into_iter().take(want).map(|(_, id)| id).collect();
+                    let _ = quant::rerank(&basef, &comp.qf, &cands, k);
+                    out.send(comp.arrival.elapsed().as_secs_f64() * 1000.0).ok();
+                    coord.send(CoordMsg::Done).ok();
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
 fn pct(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;
     }
     let idx = ((p / 100.0) * (sorted.len() as f64 - 1.0)).round() as usize;
     sorted[idx.min(sorted.len() - 1)]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_sharded(
+    args: &Args,
+    bbase: Arc<quant::QuantBinary>,
+    basef: Arc<fvecs::Vectors>,
+    pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)>,
+    workers: usize,
+) {
+    use std::collections::VecDeque;
+    let n = bbase.len();
+    let span = n / workers;
+    let (coord_tx, coord_rx) = mpsc::channel::<CoordMsg>();
+    let (otx, orx) = mpsc::channel::<f64>();
+
+    // Per-shard worker channels.
+    let mut worker_txs = Vec::with_capacity(workers);
+    let mut whandles = Vec::new();
+    for w in 0..workers {
+        let lo = w * span;
+        let hi = if w == workers - 1 { n } else { (w + 1) * span };
+        let (wtx, wrx) = mpsc::channel::<(Arc<Comp>, Arc<Vec<u64>>)>();
+        worker_txs.push(wtx);
+        let (bb, bf, ct, ot) = (bbase.clone(), basef.clone(), coord_tx.clone(), otx.clone());
+        let (seats, chunk, k, rc) = (args.seats, args.chunk, args.k, args.rerank);
+        whandles.push(thread::spawn(move || {
+            shard_worker(bb, bf, lo, hi, wrx, ct, seats, chunk, k, rc, ot);
+        }));
+    }
+    drop(otx);
+
+    // Coordinator: global seat control, fan-out to all shards, drain on Stop.
+    let seats = args.seats;
+    let chandle = thread::spawn(move || {
+        let mut inflight = 0usize;
+        let mut pending: VecDeque<Job> = VecDeque::new();
+        let mut draining = false;
+        loop {
+            while inflight < seats {
+                if let Some(j) = pending.pop_front() {
+                    let comp = Arc::new(Comp {
+                        partials: Mutex::new(Vec::new()),
+                        remaining: std::sync::atomic::AtomicUsize::new(workers),
+                        arrival: j.arrival,
+                        qf: j.qf.clone(),
+                    });
+                    for ws in &worker_txs {
+                        ws.send((comp.clone(), j.qbin.clone())).ok();
+                    }
+                    inflight += 1;
+                } else {
+                    break;
+                }
+            }
+            if draining && pending.is_empty() && inflight == 0 {
+                break;
+            }
+            match coord_rx.recv() {
+                Ok(CoordMsg::Job(j)) => pending.push_back(j),
+                Ok(CoordMsg::Done) => inflight -= 1,
+                Ok(CoordMsg::Stop) => draining = true,
+                Err(_) => break,
+            }
+        }
+        drop(worker_txs);
+    });
+
+    // Dispatcher: Poisson arrivals.
+    let start = Instant::now();
+    let total = args.warmup + args.duration;
+    let warmup_cutoff = Instant::now() + Duration::from_secs_f64(args.warmup);
+    let mut rng = Lcg(0x1234_5678_9abc_def0);
+    let np = pool.len();
+    let mut sent = 0usize;
+    let mut warmup_sent = 0usize;
+    while start.elapsed().as_secs_f64() < total {
+        let dt = -rng.unit().ln() / args.rate;
+        thread::sleep(Duration::from_secs_f64(dt));
+        let qi = (rng.next_u64() as usize) % np;
+        let (qb, qf) = (pool[qi].0.clone(), pool[qi].1.clone());
+        if Instant::now() < warmup_cutoff {
+            warmup_sent += 1;
+        }
+        if coord_tx.send(CoordMsg::Job(Job { qbin: qb, qf, arrival: Instant::now() })).is_err() {
+            break;
+        }
+        sent += 1;
+    }
+    coord_tx.send(CoordMsg::Stop).ok();
+    drop(coord_tx);
+
+    let mut lats: Vec<f64> = orx.iter().collect();
+    chandle.join().ok();
+    for h in whandles {
+        h.join().ok();
+    }
+    let drop_n = warmup_sent.min(lats.len());
+    let measured = lats.split_off(drop_n);
+    let mut s = measured;
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let done = s.len();
+    let thru = done as f64 / args.duration;
+    let mean = if done > 0 { s.iter().sum::<f64>() / done as f64 } else { f64::NAN };
+    println!(
+        "{{\"mode\":\"sharded\",\"rate\":{:.0},\"seats\":{},\"chunk\":{},\"workers\":{},\"offered\":{},\"completed\":{},\"throughput\":{:.1},\"lat_ms\":{{\"mean\":{:.2},\"p50\":{:.2},\"p95\":{:.2},\"p99\":{:.2},\"max\":{:.2}}}}}",
+        args.rate, args.seats, args.chunk, workers, sent, done, thru,
+        mean, pct(&s, 50.0), pct(&s, 95.0), pct(&s, 99.0), pct(&s, 100.0)
+    );
 }
 
 fn main() -> std::io::Result<()> {
@@ -226,6 +448,11 @@ fn main() -> std::io::Result<()> {
     } else {
         args.workers
     };
+
+    if args.mode == "sharded" {
+        run_sharded(&args, bbase, basef, pool, workers);
+        return Ok(());
+    }
 
     let (tx, rx) = mpsc::channel::<Job>();
     let rx = Arc::new(Mutex::new(rx));
