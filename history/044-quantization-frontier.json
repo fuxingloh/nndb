@@ -1,0 +1,7 @@
+{
+  "date": "2026-06-18T00:00:00Z", "commit": "PENDING",
+  "type": "synthesis-note",
+  "machine": "n/a (synthesis of history/008-037, no new measurement)",
+  "dataset": "n/a",
+  "note": "Closes questions/quantization.md. Verdict on the recall-for-bytes axis: the rotated binary funnel (1-bit sign scan + f32 rerank, random rotation as the recall dial) is the Pareto frontier for the within-cell scan. Evidence across entries: 008 scalar int8 (dominated by binary), 009/012/013/016 binary funnel (winner; 012 popcount autovectorizes, multi-accumulator -2.2x), 014/027 multi-bit prefix (doesn't pay vs rotation), 010/011 asym/LUT (lost once popcount re-priced), 026/029 rotation (free recall knob), 028 RaBitQ estimator (unbiased, no QPS win), 015/037 smaller rerank store int8/bf16 (NEGATIVE - scan is popcount-bound not rerank-bound; bf16 lost recall for no QPS). Below 1 bit not meaningful; above 1 bit doesn't pay; shrinking rerank is a dead end. Same engine that beat HNSW-in-cell at high dim in 043. Untested open branch: Product Quantization (k-means codebook + ADC lookup) and extended RaBitQ B-bit codes - different mechanism (reconstruction via LUT), must clear the 011 LUT-lost bar to be worth it."
+}
