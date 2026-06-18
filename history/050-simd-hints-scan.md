@@ -43,14 +43,51 @@ Two things collapse the ILP win at deployment scale:
   independent Hammings per loaded doc — exactly the `interleave4` trick, already in the
   engine (016/038). There's no *additional* compute parallelism to extract.
 
-## Conclusion
+## Scan-sharing flips single-thread to compute-bound (+73%)
 
-For the binary **scan**, SIMD has **~0% headroom at deployment scale**: safe hints are
-parity, hand-SIMD loses (012/023), the only compute win (ILP) is in-cache-only and
-already captured by tiling, and at scale the wall is DRAM bandwidth. Explicit
-`core::simd`/unsafe `vpshufb` on the scan would be effort against memory bandwidth —
-not worth it. **The lever at scale is fewer bytes per vector (bits/codes/residual),
-not faster popcount.** This closes the parked SIMD question *for the scan*.
+The first cut above missed the *scan-sharing* axis (T queries riding one doc-read —
+the tiling/carousel model). Single-thread, at-scale (25 MB), as T rises:
+
+| T (riders/doc) | at-scale Gcmp/s |
+|---|---|
+| 1 | 0.215 (memory-bound) |
+| 4 | 0.355 |
+| 8 | **0.371 (+73%)** |
+| 16–64 | ~0.37 (plateau) |
+
+At T≥8 the at-scale throughput **equals the in-L2 compute ceiling** — the memory tax
+is fully amortized and it's now popcount-bound. So scan-sharing *does* push single-
+thread QPS up, hard. (The engine already captures this: tiling 016/038, carousel
+039–041.)
+
+## But at full chip it's the bandwidth wall, and sharding ≠ throughput
+
+8 cores, N=5M (640 MB > L3), T=16:
+
+| scheme | base DRAM reads | Gcmp/s |
+|---|---|---|
+| sharded carousel | ×1 (shards) | **1.139** |
+| tiled batch (047 model) | ×cores | 1.071 |
+
+They're **equal** — the shared 480 MB L3 absorbs the "redundant" reads, so reading the
+base 8× isn't 8× the DRAM traffic. Both saturate at ~1.1 Gcmp/s = **0.14/core**, far
+below the 0.33–0.37/core single-thread compute ceiling → the chip is **memory/L3-
+bandwidth-bound**. The carousel's sharding gives **no peak-throughput win** over the
+tiled batch (its win is latency-under-burst, 041), and faster popcount can't help.
+
+## Conclusion (revised)
+
+- **Scan-sharing pushes single-thread +73%** to the compute ceiling — already captured
+  by tiling/carousel.
+- **At full chip the scan saturates at the memory/L3 bandwidth wall (~1.1 Gcmp/s)**,
+  where sharded == batched and SIMD (faster popcount) has nothing to add — per-core
+  (0.14) sits well below the popcount ceiling (0.33).
+- Safe hints = parity; hand-SIMD loses (012/023, reconfirmed).
+- **The only lever for chip-level scan QPS is fewer bytes per vector** (lower bits +
+  residual to hold recall, 046) — that *moves the bandwidth wall*. SIMD pushes on it.
+
+This closes the SIMD question for the scan: not worth `core::simd`/unsafe — chase
+bytes, not popcount.
 
 (Where SIMD *could* still pay is a different kernel — e.g. the asymmetric LUT (`vpshufb`
 gather, history 011) for a recall-per-byte gain — but that's a separate path, not the

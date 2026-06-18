@@ -1,6 +1,6 @@
 {
  "date": "2026-06-19T00:00:00Z",
- "commit": "f0eed25",
+ "commit": "18c0025",
  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, AVX-512 VPOPCNTDQ, L2 2MB/core, L3 480MB)",
  "experiment": "single-thread Hamming-kernel microbench (src/bin/simdbench.rs), 1024-bit codes. Safe/stable autovectorization-hint variants vs the current count_ones loop. In-L2 (4096 docs=512KB, isolates compute) and at-scale (200k docs=25MB, memory pressure).",
  "note": "SIMD step 1 (safe hints). count_ones already autovectorizes to VPOPCNTDQ; safe hints (chunks_exact8, iter zip sum) are at PARITY (no gain). manual_acc4 (4 hand accumulators) is 3x SLOWER - reconfirms 012/023 on AVX-512 (hand-splitting defeats VPOPCNTDQ). Doc-level ILP (interleave4: 4 independent full-width Hammings in flight) wins +23% IN-CACHE (0.289->0.357 Gcmp/s) but ~0% at scale (0.230->0.233) - and the tiled funnel ALREADY captures that ILP (tile of T queries = T independent Hammings per doc). At deployment scale the scan is MEMORY-BANDWIDTH-bound, not popcount-bound (single-thread 0.29 in-L2 -> 0.23 in-DRAM; 047 8-core aggregate 0.14/core = BW contention). Conclusion: explicit core::simd/unsafe SIMD on the scan has no headroom at scale; the lever is fewer bytes, not faster popcount. Closes the parked SIMD question FOR THE SCAN.",
@@ -47,5 +47,40 @@
    "variant": "interleave4_ilp",
    "gcmp_per_s": 0.233
   }
- ]
+ ],
+ "scan_sharing_single_thread": {
+  "note": "T queries share each doc-read (carousel/tiling). Pushes single-thread from memory-bound to compute ceiling: at-scale T=1 0.215 -> T=8 0.371 Gcmp/s (+73%), and T>=8 at-scale == in-L2 ceiling (memory fully amortized).",
+  "at_scale_25mb": [
+   {
+    "t": 1,
+    "gcmp": 0.215
+   },
+   {
+    "t": 4,
+    "gcmp": 0.355
+   },
+   {
+    "t": 8,
+    "gcmp": 0.371
+   },
+   {
+    "t": 16,
+    "gcmp": 0.328
+   },
+   {
+    "t": 32,
+    "gcmp": 0.355
+   },
+   {
+    "t": 64,
+    "gcmp": 0.37
+   }
+  ]
+ },
+ "multicore_8core_5M": {
+  "note": "8 cores, N=5M (640MB > L3), T=16. Sharded carousel (base read x1) vs tiled batch (base read x8) are EQUAL (~1.1 Gcmp/s) - shared L3 absorbs the redundant reads. Per-core 0.14 << single-thread compute ceiling 0.33 => chip is memory/L3-bandwidth-bound. SIMD cannot push this; the carousel sharding gives NO peak-throughput win over the tiled batch (its win is latency/burst, 041).",
+  "sharded_gcmp": 1.139,
+  "query_split_gcmp": 1.071
+ },
+ "conclusion_revised": "Scan-sharing amortizes memory and pushes SINGLE-THREAD +73% to the compute ceiling (already captured by tiling/carousel). But at full chip the scan saturates at the memory/L3 bandwidth wall (~1.1 Gcmp/s, 0.14/core), where sharded==batched and faster popcount (SIMD) cannot help. The only lever for chip-level scan QPS is FEWER BYTES per vector (lower bits + residual to hold recall) - that moves the bandwidth wall; SIMD does not."
 }

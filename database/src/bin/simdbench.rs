@@ -13,6 +13,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use clap::Parser;
+use rayon::prelude::*;
 
 #[derive(Parser)]
 #[command(about = "Hamming kernel SIMD-hint microbenchmark (stable, safe)")]
@@ -124,6 +125,62 @@ fn scan_interleave4(q: &[u64], docs: &[u64], words: usize, n: usize) -> u64 {
     s[0] + s[1] + s[2] + s[3]
 }
 
+// Tiled / carousel scan: each doc loaded once, compared against T queries (scan-
+// sharing). Amortizes the doc read across T riders → per-query bandwidth = base/T.
+// Each query's Hamming is still a full vectorized count_ones over the doc slice.
+fn scan_tiled(qs: &[u64], docs: &[u64], words: usize, n: usize, t: usize) -> u64 {
+    let mut sink = 0u64;
+    for j in 0..n {
+        let doc = &docs[j * words..(j + 1) * words];
+        for q in 0..t {
+            sink += ham_baseline(&qs[q * words..(q + 1) * words], doc) as u64;
+        }
+    }
+    sink
+}
+
+/// Sharded carousel: docs split across `cores`; each core scans ITS shard once
+/// against all T queries → the base is read ONCE total (no redundant streaming).
+fn par_sharded(qs: &[u64], docs: &[u64], words: usize, n: usize, t: usize, cores: usize) -> u64 {
+    let chunk = n.div_ceil(cores);
+    (0..cores)
+        .into_par_iter()
+        .map(|c| {
+            let lo = c * chunk;
+            let hi = ((c + 1) * chunk).min(n);
+            let mut sink = 0u64;
+            for j in lo..hi {
+                let doc = &docs[j * words..(j + 1) * words];
+                for q in 0..t {
+                    sink += ham_baseline(&qs[q * words..(q + 1) * words], doc) as u64;
+                }
+            }
+            sink
+        })
+        .sum()
+}
+
+/// Tiled batch (the 047 model): queries split across `cores`; each core scans the
+/// FULL base against its query subset → the base is streamed `cores`× (redundant).
+fn par_query_split(qs: &[u64], docs: &[u64], words: usize, n: usize, t: usize, cores: usize) -> u64 {
+    let qchunk = t.div_ceil(cores);
+    (0..cores)
+        .into_par_iter()
+        .map(|c| {
+            let qlo = c * qchunk;
+            let qhi = ((c + 1) * qchunk).min(t);
+            let mut sink = 0u64;
+            for j in 0..n {
+                let doc = &docs[j * words..(j + 1) * words];
+                for q in qlo..qhi {
+                    sink += ham_baseline(&qs[q * words..(q + 1) * words], doc) as u64;
+                }
+            }
+            sink
+        })
+        .sum()
+}
+
 fn time_it<F: FnMut() -> u64>(secs: f64, mut f: F) -> (f64, u64) {
     // warmup
     black_box(f());
@@ -171,6 +228,37 @@ fn main() {
     let gcmp = n as f64 / secs / 1e9;
     eprintln!("  {:<26} {gcmp:>6.3} Gcmp/s  (sink={sink})", "interleave4 (ILP)");
     out.push(format!("{{\"variant\":\"interleave4\",\"gcmp_per_s\":{gcmp:.4}}}"));
+
+    // --- scan-sharing (carousel/tiled) sweep: T queries share each doc read ---
+    // If bandwidth-bound, Gcmp/s rises with T (amortization) then plateaus at the
+    // compute (popcount) ceiling. The plateau height vs the in-cache ceiling tells us
+    // whether the shared scan is popcount-limited (SIMD already maxed) or has headroom.
+    let mut tq = vec![0u64; 64 * words];
+    fill(&mut tq, 0x55AA);
+    eprintln!("  -- scan-sharing T-sweep (Gcmp/s = T*n/s) --");
+    let mut tout = Vec::new();
+    for t in [1usize, 4, 8, 16, 32, 64] {
+        let (secs, sink) = time_it(args.secs, || scan_tiled(&tq, &docs, words, n, t));
+        let gcmp = (t * n) as f64 / secs / 1e9;
+        eprintln!("     T={t:<3} {gcmp:>6.3} Gcmp/s  (sink={sink})");
+        tout.push(format!("{{\"t\":{t},\"gcmp_per_s\":{gcmp:.4}}}"));
+    }
+    out.push(format!("{{\"tiled_sweep\":[{}]}}", tout.join(",")));
+
+    // --- multi-core: sharded carousel (base read once) vs tiled batch (base read
+    // cores×). At scale this is the carousel's throughput advantage. ---
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(8);
+    let t = 16usize;
+    eprintln!("  -- multi-core ({cores} cores), T={t}, N={n} --");
+    let (secs, sink) = time_it(args.secs, || par_sharded(&tq, &docs, words, n, t, cores));
+    let g_sh = (t * n) as f64 / secs / 1e9;
+    eprintln!("     sharded (base x1)     {g_sh:>6.3} Gcmp/s  (sink={sink})");
+    let (secs, sink) = time_it(args.secs, || par_query_split(&tq, &docs, words, n, t, cores));
+    let g_qs = (t * n) as f64 / secs / 1e9;
+    eprintln!("     query-split (base x{cores})  {g_qs:>6.3} Gcmp/s  (sink={sink})");
+    out.push(format!(
+        "{{\"multicore\":{{\"cores\":{cores},\"t\":{t},\"sharded_gcmp\":{g_sh:.3},\"query_split_gcmp\":{g_qs:.3}}}}}"
+    ));
 
     println!(
         "{{\"bits\":{},\"words\":{words},\"docs\":{n},\"thread\":\"single\",\"variants\":[{}]}}",
