@@ -1,6 +1,6 @@
 {
  "date": "2026-06-18T00:00:00Z",
- "commit": "PENDING",
+ "commit": "d53528c",
  "type": "capstone-model",
  "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
  "model": {
