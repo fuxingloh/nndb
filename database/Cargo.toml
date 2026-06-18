@@ -13,6 +13,10 @@ clap = { version = "4", features = ["derive"] }
 rayon = "1"
 libc = "0.2"
 
+# HNSW-in-cell comparison (src/bin/crossover.rs only): a real, parallel HNSW so
+# the funnel-vs-graph bake-off is a fair fight, not a strawman.
+hnsw_rs = "0.3"
+
 # Serving layer (server + load generator bins)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 axum = "0.8"
