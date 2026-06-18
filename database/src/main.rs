@@ -185,22 +185,15 @@ fn main() -> std::io::Result<()> {
     };
 
     // Build int8-quantized base + query set once if requested.
-    let quant_i8 = args.quant == "i8";
     let quant_bin = args.quant == "binary";
-    let quant_rabitq = args.quant == "rabitq";
-    let quant_ads = args.quant == "adsampling";
     let quant_pdx = args.quant == "pdx";
     let quant_pdxads = args.quant == "pdxads";
-    let qbase = if quant_i8 { Some(quant::QuantI8::from_f32(&base)) } else { None };
-    let qquery = if quant_i8 { Some(quant::QuantI8::from_f32(&qps_set)) } else { None };
     let bits = if args.scan_bits == 0 { base.dim } else { args.scan_bits };
-    // RaBitQ/ADSampling require a rotation; default rounds if none requested.
+    // PDX+ADSampling needs a rotation; default rounds if none requested.
     let rot_rounds = if args.rotate > 0 {
         args.rotate
-    } else if quant_ads || quant_pdxads {
+    } else if quant_pdxads {
         3
-    } else if quant_rabitq {
-        2
     } else {
         0
     };
@@ -211,10 +204,8 @@ fn main() -> std::io::Result<()> {
     };
     let bbase = if quant_bin { Some(mk(&base)) } else { None };
     let bquery = if quant_bin { Some(mk(&qps_set)) } else { None };
-    let rb = if quant_rabitq { Some(quant::RaBitQ::build(&base, rot.as_ref().unwrap(), bits)) } else { None };
-    // ADSampling: rotate base + query set so partial distances are unbiased.
-    let rbase = if quant_ads { Some(quant::rotate_vectors(&base, rot.as_ref().unwrap())) } else { None };
-    let rqps = if quant_ads || quant_pdxads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
+    // PDX+ADSampling: rotate the query set so partial distances are unbiased.
+    let rqps = if quant_pdxads { Some(quant::rotate_vectors(&qps_set, rot.as_ref().unwrap())) } else { None };
     let pdx = if quant_pdx { Some(search::PdxBase::from_vectors(&base, args.block)) } else { None };
     // PDX built from the rotated base, for ADSampling pruning on the vertical layout.
     let pdxads = if quant_pdxads {
@@ -235,12 +226,6 @@ fn main() -> std::io::Result<()> {
             search::knn_pdx_adsampling_batch(px, rq, args.k, args.eps0, args.delta)
         } else if let Some(px) = &pdx {
             search::knn_pdx_batch(px, &qps_set, args.k)
-        } else if let (Some(rb), Some(rq)) = (&rbase, &rqps) {
-            search::knn_adsampling_batch(rb, rq, args.k, args.eps0, args.delta)
-        } else if let Some(rb) = &rb {
-            quant::knn_rabitq_rerank_batch(rb, &base, &qps_set, rot.as_ref().unwrap(), args.k, args.rerank)
-        } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
-            quant::knn_i8_batch(qb, qq, args.k)
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             if args.batch > 1 {
                 quant::knn_binary_funnel_tiled(bb, bq, &base, &qps_set, args.k, args.rerank, args.batch)
@@ -296,25 +281,6 @@ fn main() -> std::io::Result<()> {
             let r = search::knn_pdx(px, queries_all.row(q), args.k);
             lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
             black_box(r);
-        } else if let Some(rb) = &rbase {
-            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
-            let r = search::knn_adsampling(rb, &qr, args.k, args.eps0, args.delta);
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
-        } else if let Some(rb) = &rb {
-            let qr = rot.as_ref().unwrap().apply(queries_all.row(q));
-            let r = if args.rerank > 0 {
-                let cands = quant::knn_rabitq(rb, &qr, args.rerank.max(args.k));
-                quant::rerank(&base, queries_all.row(q), &cands, args.k)
-            } else {
-                quant::knn_rabitq(rb, &qr, args.k)
-            };
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
-        } else if let (Some(qb), Some(qq)) = (&qbase, &qquery) {
-            let r = quant::knn_i8(qb, qq.row(q.min(qq.len() - 1)), args.k);
-            lat_ms.push(t.elapsed().as_secs_f64() * 1000.0);
-            black_box(r);
         } else if let (Some(bb), Some(bq)) = (&bbase, &bquery) {
             let qi = q.min(bq.len() - 1);
             let r = if args.rerank > 0 {
@@ -346,9 +312,7 @@ fn main() -> std::io::Result<()> {
     let p99 = eval::percentile(&lat_ms, 99.0);
 
     // --- Memory -------------------------------------------------------------
-    let index_bytes = if let Some(qb) = &qbase {
-        qb.data.len() // int8: 1 byte per element
-    } else if let Some(bb) = &bbase {
+    let index_bytes = if let Some(bb) = &bbase {
         bb.data.len() * 8 // binary: u64 words
     } else {
         base.data.len() * std::mem::size_of::<f32>()

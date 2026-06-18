@@ -151,75 +151,6 @@ pub fn knn_batch_tiled(base: &Vectors, queries: &Vectors, k: usize, tile: usize)
     per_tile.into_iter().flatten().collect()
 }
 
-/// ADSampling distance-comparison KNN (Gao & Long, SIGMOD 2023). Inputs MUST be
-/// random-rotated (e.g. via `quant::Rotation`) so that the partial squared
-/// distance over the first `i` dims is an unbiased estimate of the full distance
-/// (Johnson–Lindenstrauss). Distance is accumulated incrementally in batches of
-/// `delta`; after each batch, if the partial distance already exceeds the current
-/// k-th best by the confidence margin, the candidate is pruned without finishing —
-/// saving most of the D-dim work for the (many) far candidates. Because the
-/// rotation preserves L2 exactly, survivors get the exact distance, so results
-/// match exact KNN up to the (tiny) probabilistic pruning slack set by `eps0`.
-pub fn knn_adsampling(rbase: &Vectors, rq: &[f32], k: usize, eps0: f32, delta: usize) -> Vec<u32> {
-    let d = rbase.dim;
-    let dd = delta.max(1);
-    let mut heap: BinaryHeap<(Dist, u32)> = BinaryHeap::with_capacity(k + 1);
-    for n in 0..rbase.len() {
-        let o = rbase.row(n);
-        if heap.len() < k {
-            // No threshold yet — must compute the full distance.
-            let mut res = 0f32;
-            for j in 0..d {
-                let df = rq[j] - o[j];
-                res += df * df;
-            }
-            heap.push((Dist(res), n as u32));
-            continue;
-        }
-        let thresh = heap.peek().unwrap().0 .0; // current k-th squared distance
-        let mut res = 0f32;
-        let mut i = 0usize;
-        let mut pruned = false;
-        while i < d {
-            let end = (i + dd).min(d);
-            for j in i..end {
-                let df = rq[j] - o[j];
-                res += df * df;
-            }
-            i = end;
-            if i < d {
-                // ratio(D,i) = (i/D)·(1 + eps0/√i)²  — the ADSampling bound.
-                let fi = i as f32;
-                let t = 1.0 + eps0 / fi.sqrt();
-                let ratio = (fi / d as f32) * t * t;
-                if res >= thresh * ratio {
-                    pruned = true;
-                    break;
-                }
-            }
-        }
-        if !pruned && res < thresh {
-            heap.pop();
-            heap.push((Dist(res), n as u32));
-        }
-    }
-    heap.into_sorted_vec().into_iter().map(|(_, i)| i).collect()
-}
-
-/// Parallel ADSampling KNN over a (rotated) query set.
-pub fn knn_adsampling_batch(
-    rbase: &Vectors,
-    rqueries: &Vectors,
-    k: usize,
-    eps0: f32,
-    delta: usize,
-) -> Vec<Vec<u32>> {
-    (0..rqueries.len())
-        .into_par_iter()
-        .map(|q| knn_adsampling(rbase, rqueries.row(q), k, eps0, delta))
-        .collect()
-}
-
 /// PDX (Kuffo & Boncz, SIGMOD 2025): a **dimension-major** block layout. Vectors
 /// are grouped into blocks of `block`; within a block the data is stored
 /// transposed — all vectors' dim 0, then all vectors' dim 1, … So computing
@@ -417,24 +348,6 @@ mod tests {
         for k in 1..=4 {
             // eps0 huge => never prunes => exact.
             assert_eq!(knn_pdx_adsampling(&pdx, &q, k, 100.0, 1), knn(&base, &q, k), "k={k}");
-        }
-    }
-
-    #[test]
-    fn adsampling_conservative_matches_exact() {
-        // With a huge eps0 the pruning never triggers, so ADSampling must return
-        // exactly what brute-force KNN returns.
-        let base = vecs(&[
-            &[0.0, 0.0], &[1.0, 1.0], &[2.0, 0.5], &[5.0, 5.0],
-            &[0.2, 0.1], &[3.0, 3.0], &[1.5, 0.0], &[4.0, 1.0],
-        ]);
-        let q = [0.1, 0.1];
-        for k in 1..=4 {
-            assert_eq!(
-                knn_adsampling(&base, &q, k, 100.0, 1),
-                knn(&base, &q, k),
-                "k={k}"
-            );
         }
     }
 

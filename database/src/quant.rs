@@ -7,84 +7,8 @@
 
 use crate::fvecs::Vectors;
 use rayon::prelude::*;
-use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
-/// int8-quantized vectors: symmetric scalar quant with one global scale.
-pub struct QuantI8 {
-    pub data: Vec<i8>,
-    pub dim: usize,
-}
-
-impl QuantI8 {
-    /// Quantize f32 vectors to int8 using a single global absmax scale.
-    pub fn from_f32(v: &Vectors) -> Self {
-        let amax = v.data.iter().fold(0.0f32, |m, &x| m.max(x.abs())).max(1e-12);
-        let inv = 127.0 / amax;
-        let data = v
-            .data
-            .iter()
-            .map(|&x| (x * inv).round().clamp(-127.0, 127.0) as i8)
-            .collect();
-        QuantI8 { data, dim: v.dim }
-    }
-
-    #[inline]
-    pub fn row(&self, i: usize) -> &[i8] {
-        &self.data[i * self.dim..(i + 1) * self.dim]
-    }
-    pub fn len(&self) -> usize {
-        self.data.len() / self.dim
-    }
-}
-
-/// int8 dot product, i32 accumulate. Multiple accumulators for ILP; with
-/// `target-cpu=native` LLVM maps this to DotProd (NEON) / VNNI (x86).
-#[inline]
-pub fn dot_i8(a: &[i8], b: &[i8]) -> i32 {
-    const ACC: usize = 8;
-    let mut acc = [0i32; ACC];
-    let n = a.len();
-    let blocks = n / ACC;
-    for blk in 0..blocks {
-        let off = blk * ACC;
-        for l in 0..ACC {
-            acc[l] += a[off + l] as i32 * b[off + l] as i32;
-        }
-    }
-    let mut s: i32 = acc.iter().sum();
-    for i in (blocks * ACC)..n {
-        s += a[i] as i32 * b[i] as i32;
-    }
-    s
-}
-
-/// Top-k by **largest** int8 dot (cosine). Min-heap of size k keeps the k best.
-pub fn knn_i8(base: &QuantI8, query: &[i8], k: usize) -> Vec<u32> {
-    let mut heap: BinaryHeap<Reverse<(i32, u32)>> = BinaryHeap::with_capacity(k + 1);
-    for i in 0..base.len() {
-        let d = dot_i8(query, base.row(i));
-        if heap.len() < k {
-            heap.push(Reverse((d, i as u32)));
-        } else if d > heap.peek().unwrap().0 .0 {
-            heap.pop();
-            heap.push(Reverse((d, i as u32)));
-        }
-    }
-    let mut v: Vec<(i32, u32)> = heap.into_iter().map(|Reverse(x)| x).collect();
-    v.sort_unstable_by(|a, b| b.0.cmp(&a.0)); // descending similarity
-    v.into_iter().map(|(_, i)| i).collect()
-}
-
-pub fn knn_i8_batch(base: &QuantI8, queries: &QuantI8, k: usize) -> Vec<Vec<u32>> {
-    (0..queries.len())
-        .into_par_iter()
-        .map(|q| knn_i8(base, queries.row(q), k))
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// Binary quantization (1 bit/dim = sign) + two-stage rerank.
 // ---------------------------------------------------------------------------
 
 /// In-place fast Walsh–Hadamard transform (len must be a power of two). H/√n is
@@ -244,86 +168,6 @@ impl QuantBinary {
 pub fn binarize_query_rotated(query: &[f32], rot: &Rotation, bits: usize) -> Vec<u64> {
     let rotated = rot.apply(query);
     binarize_query(&rotated, bits)
-}
-
-/// RaBitQ 1-bit code (Gao & Long, SIGMOD 2024): rotated sign bits + a per-vector
-/// L1 norm of the rotated vector. The unbiased estimate of ⟨q,o⟩ for unit vectors
-/// is ⟨q,code⟩/⟨code,o⟩ = (2·Σ_{set bits} q'_i − Σ q') / ‖o'‖₁, where q' is the
-/// rotated query and the √D from the {±1/√D} codebook cancels. The per-vector
-/// ‖o'‖₁ is what unbiases the estimate vs plain asymmetric scoring.
-pub struct RaBitQ {
-    pub bits: QuantBinary, // rotated sign bits
-    pub norm1: Vec<f32>,   // ‖rotated vector (first `dim` dims)‖₁ per vector
-}
-
-impl RaBitQ {
-    pub fn build(v: &Vectors, rot: &Rotation, bits: usize) -> Self {
-        assert_eq!(rot.dim, v.dim, "rotation dim must match vector dim");
-        let dim = if bits == 0 { v.dim } else { bits.min(v.dim) };
-        let words = dim.div_ceil(64);
-        let n = v.len();
-        let mut data = vec![0u64; n * words];
-        let mut norm1 = vec![0f32; n];
-        data.par_chunks_mut(words)
-            .zip(norm1.par_iter_mut())
-            .enumerate()
-            .for_each(|(i, (out, nrm))| {
-                let mut r = vec![0f32; v.dim];
-                rot.apply_into(v.row(i), &mut r);
-                let mut s = 0f32;
-                for d in 0..dim {
-                    let x = r[d];
-                    s += x.abs();
-                    if x > 0.0 {
-                        out[d / 64] |= 1u64 << (d % 64);
-                    }
-                }
-                *nrm = s.max(1e-12);
-            });
-        RaBitQ { bits: QuantBinary { data, words, dim }, norm1 }
-    }
-}
-
-/// Top-C by the RaBitQ unbiased estimate. `q_rot` is the ROTATED query.
-pub fn knn_rabitq(rb: &RaBitQ, q_rot: &[f32], c: usize) -> Vec<u32> {
-    let dim = rb.bits.dim;
-    let sumq: f32 = q_rot[..dim].iter().sum();
-    let mut heap: BinaryHeap<Reverse<(ScoreF, u32)>> = BinaryHeap::with_capacity(c + 1);
-    for i in 0..rb.bits.len() {
-        let masked = asym_score(q_rot, rb.bits.row(i)); // Σ q'_i over set bits
-        let est = (2.0 * masked - sumq) / rb.norm1[i];
-        let s = ScoreF(est);
-        if heap.len() < c {
-            heap.push(Reverse((s, i as u32)));
-        } else if s > heap.peek().unwrap().0 .0 {
-            heap.pop();
-            heap.push(Reverse((s, i as u32)));
-        }
-    }
-    heap.into_iter().map(|Reverse((_, i))| i).collect()
-}
-
-/// RaBitQ funnel: rotate query → estimate top-C → exact f32 rerank → top-k.
-pub fn knn_rabitq_rerank_batch(
-    rb: &RaBitQ,
-    fbase: &Vectors,
-    fqueries: &Vectors,
-    rot: &Rotation,
-    k: usize,
-    c: usize,
-) -> Vec<Vec<u32>> {
-    (0..fqueries.len())
-        .into_par_iter()
-        .map(|q| {
-            let qr = rot.apply(fqueries.row(q));
-            let cands = knn_rabitq(rb, &qr, c.max(k));
-            if c == 0 {
-                cands.into_iter().take(k).collect()
-            } else {
-                rerank(fbase, fqueries.row(q), &cands, k)
-            }
-        })
-        .collect()
 }
 
 /// Binarize a single query vector's first `bits` dims into packed sign words
@@ -592,44 +436,6 @@ pub fn knn_binary_rerank_batch(
 }
 
 // ---------------------------------------------------------------------------
-// Asymmetric scoring: full-precision query x binary doc.
-// score = sum_i q_i * sign(doc_i) = 2*(sum of q_i where doc bit set) - sum(q).
-// Ranking only needs the masked sum (the 2x and -sum(q) are monotonic per query),
-// so the query keeps full precision while docs stay 1 bit. Higher stage-1 recall
-// than symmetric Hamming (which also throws away the query). Rank by MAX score.
-// ---------------------------------------------------------------------------
-
-/// Total-order f32 wrapper for the score heap.
-#[derive(Clone, Copy, PartialEq)]
-struct ScoreF(f32);
-impl Eq for ScoreF {}
-impl PartialOrd for ScoreF {
-    fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-        Some(self.cmp(o))
-    }
-}
-impl Ord for ScoreF {
-    fn cmp(&self, o: &Self) -> Ordering {
-        self.0.total_cmp(&o.0)
-    }
-}
-
-/// Asymmetric score: sum of float-query values at the doc's set sign-bits.
-/// (Direct form; the `vpshufb` LUT is a faster way to compute the same value.)
-#[inline]
-pub fn asym_score(query: &[f32], doc: &[u64]) -> f32 {
-    let mut s = 0.0f32;
-    for (w, &word) in doc.iter().enumerate() {
-        let mut bits = word;
-        let base = w * 64;
-        while bits != 0 {
-            s += query[base + bits.trailing_zeros() as usize];
-            bits &= bits - 1; // clear lowest set bit
-        }
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,26 +452,5 @@ mod tests {
         let bq = QuantBinary::from_f32(&q);
         let got = knn_binary_rerank_batch(&bb, &bq, &base, &q, 1, 4);
         assert_eq!(got[0][0], 0); // exact nearest after rerank
-    }
-
-    #[test]
-    fn i8_matches_exact_on_simple() {
-        // Normalized-ish vectors; nearest by dot should match obvious answer.
-        let base = Vectors {
-            data: vec![
-                1.0, 0.0, // a
-                0.9, 0.1, // b (closest to query)
-                -1.0, 0.0, // c (opposite)
-                0.0, 1.0, // d
-            ],
-            dim: 2,
-        };
-        let q = Vectors { data: vec![1.0, 0.05], dim: 2 };
-        let qb = QuantI8::from_f32(&base);
-        let qq = QuantI8::from_f32(&q);
-        let got = knn_i8(&qb, qq.row(0), 2);
-        assert_eq!(got[0], 0); // [1,0] highest dot with [1,0.05]
-        assert!(got.contains(&1));
-        assert!(!got.contains(&2)); // opposite excluded
     }
 }
