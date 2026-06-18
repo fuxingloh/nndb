@@ -22,7 +22,53 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
+use memmap2::{Advice, Mmap};
+use vector_search::search::l2_sq;
 use vector_search::{fvecs, quant};
+
+/// Where the f32 rerank vectors live. The 045 hybrid: 1-bit codes stay in RAM for the
+/// shared carousel scan; the big f32 store can live on SSD (mmap), with only the C
+/// rerank candidates read per query.
+enum RerankStore {
+    Ram(fvecs::Vectors),
+    Disk { _mmap: Mmap, ptr: *const f32, dim: usize },
+}
+unsafe impl Send for RerankStore {}
+unsafe impl Sync for RerankStore {}
+impl RerankStore {
+    #[inline]
+    fn row(&self, i: usize) -> &[f32] {
+        match self {
+            RerankStore::Ram(v) => v.row(i),
+            RerankStore::Disk { ptr, dim, .. } => unsafe {
+                std::slice::from_raw_parts(ptr.add(i * dim), *dim)
+            },
+        }
+    }
+    fn rerank(&self, q: &[f32], cands: &[u32], k: usize) -> Vec<u32> {
+        let mut s: Vec<(f32, u32)> =
+            cands.iter().map(|&c| (l2_sq(q, self.row(c as usize)), c)).collect();
+        s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        s.into_iter().take(k).map(|(_, i)| i).collect()
+    }
+    fn open_disk(path: &std::path::Path, dim: usize) -> std::io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        let _ = mmap.advise(Advice::Random);
+        let ptr = mmap.as_ptr() as *const f32;
+        Ok(RerankStore::Disk { _mmap: mmap, ptr, dim })
+    }
+}
+
+/// Write base vectors as a raw flat f32 file (row i at i*dim*4) if it's missing.
+fn ensure_flat(base: &fvecs::Vectors, path: &std::path::Path) -> std::io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    let bytes =
+        unsafe { std::slice::from_raw_parts(base.data.as_ptr() as *const u8, base.data.len() * 4) };
+    std::fs::write(path, bytes)
+}
 
 #[derive(Parser)]
 #[command(about = "Cooperative carousel scan vs per-query serving, under bursty load")]
@@ -61,6 +107,11 @@ struct Args {
     /// F=workers fully shards (min latency).
     #[arg(long, default_value_t = 1)]
     fan: usize,
+
+    /// Disk-resident rerank: keep 1-bit codes in RAM, mmap the f32 store from
+    /// `{prefix}.f32raw` on SSD (32× less committed RAM). Default: f32 in RAM.
+    #[arg(long, default_value_t = false)]
+    disk: bool,
 }
 
 struct Job {
@@ -90,15 +141,15 @@ impl Lcg {
     }
 }
 
-fn finalize(aq: Aq, basef: &fvecs::Vectors, k: usize) -> f64 {
+fn finalize(aq: Aq, basef: &RerankStore, k: usize) -> f64 {
     let cands: Vec<u32> = aq.heap.into_iter().map(|(_, i)| i).collect();
-    let _ = quant::rerank(basef, &aq.qf, &cands, k);
+    let _ = basef.rerank(&aq.qf, &cands, k);
     aq.arrival.elapsed().as_secs_f64() * 1000.0
 }
 
 fn carousel_worker(
     bbase: Arc<quant::QuantBinary>,
-    basef: Arc<fvecs::Vectors>,
+    basef: Arc<RerankStore>,
     rx: Arc<Mutex<Receiver<Job>>>,
     seats: usize,
     chunk: usize,
@@ -182,7 +233,7 @@ fn carousel_worker(
 
 fn perquery_worker(
     bbase: Arc<quant::QuantBinary>,
-    basef: Arc<fvecs::Vectors>,
+    basef: Arc<RerankStore>,
     rx: Arc<Mutex<Receiver<Job>>>,
     k: usize,
     rerank_c: usize,
@@ -193,7 +244,7 @@ fn perquery_worker(
         match got {
             Ok(j) => {
                 let cands = quant::knn_binary(&bbase, &j.qbin, rerank_c.max(k));
-                let _ = quant::rerank(&basef, &j.qf, &cands, k);
+                let _ = basef.rerank(&j.qf, &cands, k);
                 out.send(j.arrival.elapsed().as_secs_f64() * 1000.0).ok();
             }
             Err(_) => return,
@@ -227,7 +278,7 @@ struct ShardAq {
 #[allow(clippy::too_many_arguments)]
 fn shard_worker(
     bbase: Arc<quant::QuantBinary>,
-    basef: Arc<fvecs::Vectors>,
+    basef: Arc<RerankStore>,
     lo: usize,
     hi: usize,
     rx: Receiver<(Arc<Comp>, Arc<Vec<u64>>)>,
@@ -303,7 +354,7 @@ fn shard_worker(
                     let mut all: Vec<(u32, u32)> = comp.partials.lock().unwrap().drain(..).flatten().collect();
                     all.sort_unstable();
                     let cands: Vec<u32> = all.into_iter().take(want).map(|(_, id)| id).collect();
-                    let _ = quant::rerank(&basef, &comp.qf, &cands, k);
+                    let _ = basef.rerank(&comp.qf, &cands, k);
                     out.send(comp.arrival.elapsed().as_secs_f64() * 1000.0).ok();
                     coord.send(CoordMsg::Done).ok();
                 }
@@ -326,7 +377,7 @@ fn pct(sorted: &[f64], p: f64) -> f64 {
 fn run_sharded(
     args: &Args,
     bbase: Arc<quant::QuantBinary>,
-    basef: Arc<fvecs::Vectors>,
+    basef: Arc<RerankStore>,
     pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)>,
     workers: usize,
 ) {
@@ -476,7 +527,7 @@ fn group_coordinator(
 fn run_grouped(
     args: &Args,
     bbase: Arc<quant::QuantBinary>,
-    basef: Arc<fvecs::Vectors>,
+    basef: Arc<RerankStore>,
     pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)>,
     workers: usize,
 ) {
@@ -563,7 +614,17 @@ fn main() -> std::io::Result<()> {
     let base = fvecs::read_fvecs(args.data.join(format!("{p}_base.fvecs")))?;
     let queries = fvecs::read_fvecs(args.data.join(format!("{p}_query.fvecs")))?;
     let bbase = Arc::new(quant::QuantBinary::from_f32(&base));
-    let basef = Arc::new(base);
+    let dim = base.dim;
+    let basef = if args.disk {
+        let flat = args.data.join(format!("{p}.f32raw"));
+        ensure_flat(&base, &flat)?;
+        drop(base); // free the RAM copy — f32 now comes from SSD (codes stay in RAM)
+        eprintln!("rerank store: DISK (mmap {})", flat.display());
+        Arc::new(RerankStore::open_disk(&flat, dim)?)
+    } else {
+        eprintln!("rerank store: RAM");
+        Arc::new(RerankStore::Ram(base))
+    };
 
     // Query pool: binary code (for scan) + f32 (for rerank).
     let pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)> = (0..queries.len())

@@ -1,0 +1,44 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "8f1d67e",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU, 15GB RAM, EBS gp3)",
+ "config": "carousel grouped fan=4, Poisson rate=400, 8 workers, Cohere 1M x 1024, binary scan in RAM; rerank store RAM vs DISK (mmap f32). src/bin/carousel.rs --disk.",
+ "note": "Stacking the serving layer (carousel) with the storage layer (disk-resident f32). KEY FINDING: the carousel shares the SCAN across riders, but each query rerank (C random f32 reads) is UNSHARED and becomes the disk bottleneck. Naive C=1000 on disk collapses under load: cold p50=178s (death-spiral backlog), and even after a cat-prewarm p50=6052ms (1000 reads/query x cache-miss penalty tips into overload at 400 QPS / 8 workers). DISK works only at SMALL C: C=128 disk = p50 4.68ms @ 385 QPS, on par with (slightly better than) RAM C=1000 (6.05ms) because fewer rerank ops. Implications: (1) disk-resident serving REQUIRES small C -> motivates adaptive-C (048); (2) small C costs recall -> must hold recall with rotation+residual (051); (3) the 32x committed-RAM saving only realizes when corpus > RAM (when it fits, page cache holds the f32 anyway, RSS ~full, evictable). So the coherent production stack is carousel + disk + small/adaptive-C + rotation + residual; the naive C=1000 disk stack fails.",
+ "runs": [
+  {
+   "store": "ram",
+   "c": 1000,
+   "rate": 400,
+   "throughput": 385.5,
+   "p50_ms": 6.05,
+   "p95_ms": 12.39,
+   "p99_ms": 20.86
+  },
+  {
+   "store": "disk_cold",
+   "c": 1000,
+   "rate": 400,
+   "throughput": 386.5,
+   "p50_ms": 178673.0,
+   "note": "cold f32raw: total collapse"
+  },
+  {
+   "store": "disk_warm",
+   "c": 1000,
+   "rate": 400,
+   "throughput": 386.5,
+   "p50_ms": 6052.0,
+   "note": "still overloads: unshared 1000-read rerank"
+  },
+  {
+   "store": "disk_warm",
+   "c": 128,
+   "rate": 400,
+   "throughput": 385.3,
+   "p50_ms": 4.68,
+   "p95_ms": 10.27,
+   "p99_ms": 15.39,
+   "note": "VIABLE - small C"
+  }
+ ]
+}
