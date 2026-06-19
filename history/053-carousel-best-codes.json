@@ -41,5 +41,36 @@
    "p99": 2936.31,
    "cliff": true
   }
- ]
+ ],
+ "default_fan1_envelope": {
+  "note": "The carousel DEFAULT (fan=1, pack) with best codes: NO CLIFF to ~937 QPS (the 8-core compute capacity), recall ~0.998. Cliffs only at 1200 QPS = genuinely past capacity (needs more cores, not a scheduler fix). So carousel + best codes IS a solid no-cliff serving default. fan>1 lowers LOW-LOAD latency (200 QPS: fan=8 ~4.5ms vs fan=1 12ms) but cliffs at high load; adaptive-F would get the best of both (low-load latency AND no cliff) - a latency nicety, NOT a correctness need.",
+  "points": [
+   {
+    "rate": 200,
+    "throughput": 190,
+    "p50": 12.08,
+    "p99": 15.96
+   },
+   {
+    "rate": 600,
+    "throughput": 573,
+    "p50": 15.06,
+    "p99": 31.14
+   },
+   {
+    "rate": 1000,
+    "throughput": 937,
+    "p50": 49.49,
+    "p99": 78.4
+   },
+   {
+    "rate": 1200,
+    "throughput": 1115,
+    "p50": 541.91,
+    "cliff": true,
+    "note": "past 8-core capacity"
+   }
+  ]
+ },
+ "conclusion": "Carousel + best codes (rotation+residual) is the DEFAULT serving engine: recall ~0.998, no-cliff to ~937 QPS (12-49ms p50). fan=1 is the safe default. The adaptive fan-out controller (F=cores/in-flight) is the one remaining build, but it is a LOW-LOAD LATENCY optimization (12->4.5ms at light load), not required for correctness/no-cliff."
 }

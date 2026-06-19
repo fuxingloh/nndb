@@ -36,3 +36,23 @@ The carousel is now the default best-codes serving path (recall 0.998, ~5–13 m
 required, not optional** — it's the piece that turns the per-load *optimal* envelope
 (no cliff to capacity) into something a single running server achieves automatically.
 That controller is the last unbuilt piece.
+
+## Update — the default (fan=1) is already a no-cliff server
+
+fan=1 (pack), best codes, recall ~0.998:
+
+| offered QPS | throughput | p50 | p99 |
+|---|---|---|---|
+| 200 | 190 | 12.1 ms | 16.0 ms |
+| 600 | 573 | 15.1 ms | 31.1 ms |
+| 1000 | 937 | 49.5 ms | 78.4 ms |
+| 1200 | 1115 | 542 ms 💥 | past capacity |
+
+No cliff to **~937 QPS** (the 8-core compute capacity); it only breaks at 1200,
+which is genuinely past what the box can do (a cores problem, not a scheduler one).
+
+**Revised conclusion:** carousel + best codes IS the default serving engine —
+recall ~0.998, no-cliff to capacity, 12–49 ms p50, fan=1 the safe default. fan>1
+lowers low-load latency (200 QPS: ~4.5 ms at fan=8 vs 12 ms at fan=1) but cliffs
+under heavy load. The adaptive fan-out controller (`F = cores ÷ in-flight`) would get
+the best of both — but it's a **low-load latency optimization, not a correctness need.**
