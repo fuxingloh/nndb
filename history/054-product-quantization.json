@@ -1,0 +1,99 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "519184b",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "experiment": "Product Quantization (M subspaces, K=256, scalar ADC) on Cohere 1M x 1024. src/bin/pq.rs. Trained on 100k sample, 12 kmeans iters. Recall@10 vs exact GT, with/without exact rerank.",
+ "note": "PQ closes 044 open branch. RESULT: PQ wins recall-per-BYTE but loses recall-per-QPS to the binary funnel. M=32 (32 B/vec, 4x fewer than the 128 B binary code) reaches 0.992 recall (C=1000) but only 140 QPS vs the funnel 0.998 @ 963 QPS - 7x slower. M=64 0.9998 @ 62 QPS. Reason: ADC does M data-dependent gathers/doc which do NOT autovectorize, while the funnel popcount is VPOPCNTDQ (8 words/instr). PQ is cache-resident (16-64MB) so NOT bandwidth-bound - it is gather-COMPUTE-bound, and gather loses to popcount. This is 011 (asym LUT lost to popcount) confirmed at scale. PQ wins only on memory footprint (8-32 B vs 128 B). To make PQ competitive on QPS needs SIMD ADC (4-bit codes + vpshufb LUT) - the parked unsafe-SIMD path. Verdict: binary funnel stays the QPS winner; PQ is the recall-per-byte / footprint option.",
+ "binary_funnel_ref": "128 B/vec, 0.9952 @ 963 QPS or 0.9986 @ 883 QPS (051)",
+ "dataset": "cohere",
+ "n": 1000000,
+ "dim": 1024,
+ "nq": 1000,
+ "k": 10,
+ "points": [
+  {
+   "m": 8,
+   "bytes_per_vec": 8,
+   "c": 0,
+   "recall": 0.0708,
+   "qps": 595
+  },
+  {
+   "m": 8,
+   "bytes_per_vec": 8,
+   "c": 200,
+   "recall": 0.3732,
+   "qps": 596
+  },
+  {
+   "m": 8,
+   "bytes_per_vec": 8,
+   "c": 1000,
+   "recall": 0.6752,
+   "qps": 546
+  },
+  {
+   "m": 16,
+   "bytes_per_vec": 16,
+   "c": 0,
+   "recall": 0.2063,
+   "qps": 288
+  },
+  {
+   "m": 16,
+   "bytes_per_vec": 16,
+   "c": 200,
+   "recall": 0.6834,
+   "qps": 292
+  },
+  {
+   "m": 16,
+   "bytes_per_vec": 16,
+   "c": 1000,
+   "recall": 0.9054,
+   "qps": 273
+  },
+  {
+   "m": 32,
+   "bytes_per_vec": 32,
+   "c": 0,
+   "recall": 0.4054,
+   "qps": 142
+  },
+  {
+   "m": 32,
+   "bytes_per_vec": 32,
+   "c": 200,
+   "recall": 0.9241,
+   "qps": 137
+  },
+  {
+   "m": 32,
+   "bytes_per_vec": 32,
+   "c": 1000,
+   "recall": 0.9924,
+   "qps": 140
+  },
+  {
+   "m": 64,
+   "bytes_per_vec": 64,
+   "c": 0,
+   "recall": 0.5926,
+   "qps": 63
+  },
+  {
+   "m": 64,
+   "bytes_per_vec": 64,
+   "c": 200,
+   "recall": 0.9931,
+   "qps": 62
+  },
+  {
+   "m": 64,
+   "bytes_per_vec": 64,
+   "c": 1000,
+   "recall": 0.9998,
+   "qps": 62
+  }
+ ]
+}
