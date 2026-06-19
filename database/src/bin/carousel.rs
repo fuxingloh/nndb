@@ -112,6 +112,15 @@ struct Args {
     /// `{prefix}.f32raw` on SSD (32× less committed RAM). Default: f32 in RAM.
     #[arg(long, default_value_t = false)]
     disk: bool,
+
+    /// Random-rotation rounds before binarizing (recall, free). Default 2 — the
+    /// best-codes default so the server serves the real engine, not plain binary.
+    #[arg(long, default_value_t = 2)]
+    rotate: usize,
+
+    /// Residual encoding: subtract the base centroid before binarizing (recall, free).
+    #[arg(long, default_value_t = true)]
+    residual: bool,
 }
 
 struct Job {
@@ -613,8 +622,20 @@ fn main() -> std::io::Result<()> {
     let p = &args.prefix;
     let base = fvecs::read_fvecs(args.data.join(format!("{p}_base.fvecs")))?;
     let queries = fvecs::read_fvecs(args.data.join(format!("{p}_query.fvecs")))?;
-    let bbase = Arc::new(quant::QuantBinary::from_f32(&base));
     let dim = base.dim;
+    // Best-codes by default: random rotation + residual (centroid-subtracted) before
+    // binarizing → recall ~0.995 (051), at zero scan cost. The carousel serves THESE
+    // codes, not plain binary. Rerank stays exact on the raw f32 (basef).
+    let rot = if args.rotate > 0 { Some(quant::Rotation::new(dim, args.rotate, 0x5EED)) } else { None };
+    let centroid = if args.residual { Some(quant::centroid(&base)) } else { None };
+    let code_src = centroid.as_ref().map(|c| quant::subtract_centroid(&base, c));
+    let src_ref = code_src.as_ref().unwrap_or(&base);
+    let bbase = Arc::new(match &rot {
+        Some(r) => quant::QuantBinary::from_f32_rotated(src_ref, r, 0),
+        None => quant::QuantBinary::from_f32(src_ref),
+    });
+    drop(code_src);
+    eprintln!("codes: rotate={} residual={} (recall ~0.995 config)", args.rotate, args.residual);
     let basef = if args.disk {
         let flat = args.data.join(format!("{p}.f32raw"));
         ensure_flat(&base, &flat)?;
@@ -626,13 +647,22 @@ fn main() -> std::io::Result<()> {
         Arc::new(RerankStore::Ram(base))
     };
 
-    // Query pool: binary code (for scan) + f32 (for rerank).
+    // Query pool: stage-1 code (rotated+residual, for the scan) + raw f32 (for rerank).
     let pool: Vec<(Arc<Vec<u64>>, Arc<Vec<f32>>)> = (0..queries.len())
         .map(|i| {
-            (
-                Arc::new(quant::binarize_query(queries.row(i), 0)),
-                Arc::new(queries.row(i).to_vec()),
-            )
+            let code = match (&rot, &centroid) {
+                (Some(r), Some(c)) => {
+                    let q: Vec<f32> = queries.row(i).iter().zip(c).map(|(a, b)| a - b).collect();
+                    quant::binarize_query_rotated(&q, r, 0)
+                }
+                (Some(r), None) => quant::binarize_query_rotated(queries.row(i), r, 0),
+                (None, Some(c)) => {
+                    let q: Vec<f32> = queries.row(i).iter().zip(c).map(|(a, b)| a - b).collect();
+                    quant::binarize_query(&q, 0)
+                }
+                (None, None) => quant::binarize_query(queries.row(i), 0),
+            };
+            (Arc::new(code), Arc::new(queries.row(i).to_vec()))
         })
         .collect();
 

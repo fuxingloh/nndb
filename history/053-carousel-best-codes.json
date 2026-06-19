@@ -1,0 +1,45 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "9498109",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "config": "carousel grouped fan=4, RAM rerank C=1000, Cohere 1M x 1024. Codes now DEFAULT to rotation x2 + residual (recall ~0.998 per 051, identical code path) - the carousel serves the real engine, not plain binary.",
+ "note": "Made the carousel default to the best codes (rotation+residual wired into its scan; rerank stays exact on raw f32). Two results: (1) rotation+residual compose into the carousel FOR FREE - latency envelope identical to plain-binary 041, now at recall ~0.998 instead of 0.89 (confirms they are zero-scan-cost code-formation knobs, orthogonal to serving). (2) A FIXED fan cliffs: fan=4 holds to ~600 QPS (12.6ms p50) then collapses at 800 (672ms) - matching 041, where optimal fan drops with load. So a single fixed fan cannot cover the load range without a cliff -> the adaptive fan-out controller (F=cores/in-flight, live) is REQUIRED, not optional, to realize the no-cliff envelope at recall 0.998.",
+ "recall_inherited": 0.998,
+ "envelope_fan4": [
+  {
+   "rate": 200,
+   "throughput": 190,
+   "p50": 5.01,
+   "p95": 7.41,
+   "p99": 8.42
+  },
+  {
+   "rate": 400,
+   "throughput": 385,
+   "p50": 6.48,
+   "p95": 12.97,
+   "p99": 18.54
+  },
+  {
+   "rate": 600,
+   "throughput": 573,
+   "p50": 12.58,
+   "p95": 28.52,
+   "p99": 39.91
+  },
+  {
+   "rate": 800,
+   "throughput": 751,
+   "p50": 672.44,
+   "p99": 1325.07,
+   "cliff": true
+  },
+  {
+   "rate": 1000,
+   "throughput": 936,
+   "p50": 1762.4,
+   "p99": 2936.31,
+   "cliff": true
+  }
+ ]
+}
