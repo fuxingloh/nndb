@@ -20,6 +20,9 @@ hnsw_rs = "0.3"
 # Disk-resident vectors economics study (src/bin/disk.rs only): mmap the f32 store.
 memmap2 = "0.9"
 
+# SVD for learned rotations — ITQ (src/bin/itq.rs) and OPQ (src/bin/pq.rs --opq).
+nalgebra = "0.33"
+
 # Serving layer (server + load generator bins)
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 axum = "0.8"

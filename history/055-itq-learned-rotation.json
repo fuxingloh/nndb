@@ -1,0 +1,37 @@
+{
+ "date": "2026-06-19T00:00:00Z",
+ "commit": "ce1f5c2",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "experiment": "ITQ (Gong & Lazebnik 2011) learned rotation vs random FWHT rotation for binary codes. Cohere 1M x 1024. b-dim projection = first b dims of FWHT-rotated vector; ITQ learns a b x b rotation on top (sign + orthogonal Procrustes via SVD, 30 iters, 50k train sample). Recall@10 vs exact GT, binary funnel + exact rerank. src/bin/itq.rs.",
+ "note": "Learned (ITQ) rotation beats random by a CONSISTENT but MODEST +1.2 to +1.9 pts at fixed bits. 256b C=1000: 0.7151->0.7344; 512b C=1000: 0.9286->0.9403. Tradeoff: ITQ rotation is DENSE (b x b) so it costs O(b^2)/vector to apply vs FWHTs O(b log b) (~32x more at 256b, but still a small absolute per-query cost ~1-2% of the scan), plus an offline SVD fit. Verdict: a real free-ish recall gain, but SMALL - residual (046, +3-9 pts) is a much bigger recall lever for the same axis. ITQ worth it only when squeezing every last point and the dense-rotation apply cost is acceptable.",
+ "points": [
+  {
+   "bits": 256,
+   "c": 200,
+   "random": 0.5003,
+   "itq": 0.519,
+   "delta": 0.0187
+  },
+  {
+   "bits": 256,
+   "c": 1000,
+   "random": 0.7151,
+   "itq": 0.7344,
+   "delta": 0.0193
+  },
+  {
+   "bits": 512,
+   "c": 200,
+   "random": 0.7846,
+   "itq": 0.7998,
+   "delta": 0.0152
+  },
+  {
+   "bits": 512,
+   "c": 1000,
+   "random": 0.9286,
+   "itq": 0.9403,
+   "delta": 0.0117
+  }
+ ]
+}
