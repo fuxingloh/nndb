@@ -1,0 +1,53 @@
+{
+ "date": "2026-06-20T00:00:00Z",
+ "commit": "02880b2",
+ "type": "capstone",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "winner": "binary funnel (rotation x2 + residual) + tiling, served by carousel",
+ "headline": {
+  "max_recall": "0.9986 @ 883 QPS @ 10.6ms",
+  "balanced": "0.9952 @ 963 QPS @ 8.0ms",
+  "predictable_tail": "~0.995 @ ~350 QPS, p50 12ms p99 16ms",
+  "serving": "recall 0.998, no-cliff to ~940 QPS, 12-49ms p50",
+  "footprint": "128 MB codes"
+ },
+ "frontier_cohere_1M": [
+  {
+   "method": "binary funnel rot+residual",
+   "bytes": 128,
+   "recall": "0.995-0.999",
+   "qps": "880-960"
+  },
+  {
+   "method": "PQ M=64",
+   "bytes": 64,
+   "recall": 0.9998,
+   "qps": 62
+  },
+  {
+   "method": "PQ M=32",
+   "bytes": 32,
+   "recall": 0.992,
+   "qps": 140
+  },
+  {
+   "method": "PQ M=16",
+   "bytes": 16,
+   "recall": 0.905,
+   "qps": 273
+  },
+  {
+   "method": "OPQ M=16",
+   "bytes": 16,
+   "recall": "~0.95 (+2.3 vs PQ)",
+   "qps": "=PQ"
+  },
+  {
+   "method": "ITQ rotation",
+   "bytes": "binary",
+   "recall": "+1.5 vs random",
+   "qps": "=binary"
+  }
+ ],
+ "note": "Two opposite Pareto frontiers: recall-per-QPS -> binary funnel wins outright (10-15x PQ QPS at equal recall); recall-per-byte -> PQ/OPQ win (32B@0.99 vs 128B) but only matter when RAM-bound. The deciding physics: POPCOUNT (VPOPCNTDQ, vectorized) beats GATHER (PQ/OPQ ADC lookups, not vectorized) - so 1-bit+popcount is throughput-optimal on CPU; fewer bytes help footprint not speed (011/050/054 confirmed). PQ/ITQ/OPQ exploration CONFIRMS the binary funnel as the QPS winner rather than beating it. Best stacked: ~0.995 recall @ ~960 QPS @ 8ms, no-cliff serving to ~940 QPS, 128MB, one 8-core box."
+}
