@@ -1,0 +1,35 @@
+{
+ "date": "2026-06-20T00:00:00Z",
+ "commit": "35c9908",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "experiment": "OPQ (learned rotation + PQ, alternating k-means + orthogonal Procrustes, 5 iters) vs plain PQ. Cohere N=200k x 1024, K=256, recall@10 vs exact GT. src/bin/pq.rs --opq.",
+ "note": "OPQ improves PQ recall-per-byte modestly: M=16 C=1000 0.9531->0.9765 (+2.3pts), M=32 0.9960->0.9975 (+0.15, near ceiling). Pure ADC (C=0) gains more (M=16 0.22->0.30). BUT the dense 1024x1024 learned rotation makes build ~70x slower (1273s vs 16s per M) and QPS is UNCHANGED (~1140/630, still ADC-gather-bound, still far below the binary funnels 963 QPS at 128B). So OPQ better recall-per-byte than PQ, but inherits PQs QPS loss vs the funnel and adds a huge build cost. Confirms the family verdict: PQ/OPQ win footprint, lose throughput.",
+ "comparison_n200k_c1000": [
+  {
+   "m": 16,
+   "pq_recall": 0.9531,
+   "opq_recall": 0.9765,
+   "qps": 1140,
+   "opq_build_s": 1273
+  },
+  {
+   "m": 32,
+   "pq_recall": 0.996,
+   "opq_recall": 0.9975,
+   "qps": 630,
+   "opq_build_s": 1293
+  }
+ ],
+ "pure_adc_c0": [
+  {
+   "m": 16,
+   "pq": 0.2205,
+   "opq": 0.2995
+  },
+  {
+   "m": 32,
+   "pq": 0.4116,
+   "opq": 0.4442
+  }
+ ]
+}

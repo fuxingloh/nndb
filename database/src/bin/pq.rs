@@ -45,6 +45,92 @@ struct Args {
     /// rerank width C (0 = pure ADC top-k, no rerank)
     #[arg(long, value_delimiter = ',', default_value = "0,200,1000")]
     rerank: Vec<usize>,
+    /// OPQ: learn a rotation (alternating PQ + Procrustes) before PQ, vs plain PQ.
+    #[arg(long, default_value_t = false)]
+    opq: bool,
+    #[arg(long, default_value_t = 5)]
+    opq_iters: usize,
+}
+
+/// y = X·R  (n×dim · dim×dim), parallel over rows.
+fn apply_rot_full(x: &[f32], r: &[f32], n: usize, dim: usize) -> Vec<f32> {
+    let mut out = vec![0f32; n * dim];
+    out.par_chunks_mut(dim).enumerate().for_each(|(p, o)| {
+        let v = &x[p * dim..(p + 1) * dim];
+        for j in 0..dim {
+            let mut acc = 0f32;
+            for i in 0..dim {
+                acc += v[i] * r[i * dim + j];
+            }
+            o[j] = acc;
+        }
+    });
+    out
+}
+
+/// OPQ: learn dim×dim orthogonal R that aligns the data to PQ's subspaces. Alternates:
+/// rotate → PQ (k-means per subspace) → reconstruct → Procrustes update of R from
+/// SVD(Xᵀ·X̂). Returns R (dim*dim). Fit on the sample only.
+fn fit_opq(train: &Vectors, m: usize, k: usize, km_iters: usize, opq_iters: usize) -> Vec<f32> {
+    let dim = train.dim;
+    let n = train.len();
+    let sub = dim / m;
+    let mut r = vec![0f32; dim * dim];
+    for i in 0..dim {
+        r[i * dim + i] = 1.0;
+    }
+    for _ in 0..opq_iters {
+        let y = apply_rot_full(&train.data, &r, n, dim); // n×dim rotated
+                                                         // PQ on y → reconstruction yhat
+        let mut yhat = vec![0f32; n * dim];
+        for s in 0..m {
+            // gather subspace s
+            let mut subdata = vec![0f32; n * sub];
+            for p in 0..n {
+                subdata[p * sub..(p + 1) * sub].copy_from_slice(&y[p * dim + s * sub..p * dim + (s + 1) * sub]);
+            }
+            let book = kmeans(&subdata, n, sub, k, km_iters);
+            // assign + write reconstruction
+            for p in 0..n {
+                let sv = &subdata[p * sub..(p + 1) * sub];
+                let mut best = 0usize;
+                let mut bd = f32::INFINITY;
+                for c in 0..k {
+                    let d = l2_sq(sv, &book[c * sub..(c + 1) * sub]);
+                    if d < bd {
+                        bd = d;
+                        best = c;
+                    }
+                }
+                yhat[p * dim + s * sub..p * dim + (s + 1) * sub]
+                    .copy_from_slice(&book[best * sub..(best + 1) * sub]);
+            }
+        }
+        // M = Xᵀ·X̂ (dim×dim); R = U·Wᵀ from SVD
+        let mtx: Vec<f32> = (0..dim * dim)
+            .into_par_iter()
+            .map(|idx| {
+                let i = idx / dim;
+                let j = idx % dim;
+                let mut acc = 0f32;
+                for p in 0..n {
+                    acc += train.data[p * dim + i] * yhat[p * dim + j];
+                }
+                acc
+            })
+            .collect();
+        let dm = nalgebra::DMatrix::from_row_slice(dim, dim, &mtx);
+        let svd = dm.svd(true, true);
+        let u = svd.u.unwrap();
+        let vt = svd.v_t.unwrap();
+        let rnew = u * vt;
+        for i in 0..dim {
+            for j in 0..dim {
+                r[i * dim + j] = rnew[(i, j)];
+            }
+        }
+    }
+    r
 }
 
 fn sub(v: &Vectors, n: usize) -> Vectors {
@@ -238,16 +324,26 @@ fn main() -> std::io::Result<()> {
             continue;
         }
         let tb = Instant::now();
-        let pq = Pq::train_encode(&base, &train, m, 256, args.iters);
+        // OPQ: learn a rotation aligning data to PQ subspaces; PQ+ADC run on the rotated
+        // space, rerank stays exact on the RAW vectors. Plain PQ when --opq is off.
+        let opq_r = if args.opq { Some(fit_opq(&train, m, 256, args.iters, args.opq_iters)) } else { None };
+        let rbase = opq_r.as_ref().map(|r| Vectors { data: apply_rot_full(&base.data, r, base.len(), dim), dim });
+        let rtrain = opq_r.as_ref().map(|r| Vectors { data: apply_rot_full(&train.data, r, train.len(), dim), dim });
+        let rq = opq_r.as_ref().map(|r| Vectors { data: apply_rot_full(&qsub.data, r, nq, dim), dim });
+        let cbase = rbase.as_ref().unwrap_or(&base);
+        let ctrain = rtrain.as_ref().unwrap_or(&train);
+        let cq = rq.as_ref().unwrap_or(&qsub);
+        let pq = Pq::train_encode(cbase, ctrain, m, 256, args.iters);
         let build_s = tb.elapsed().as_secs_f64();
-        eprintln!("\n=== M={m} ({m} B/vec, {:.0} MB) build={build_s:.1}s ===", pq.mem_bytes() as f64 / 1e6);
+        let tag = if args.opq { "OPQ" } else { "PQ" };
+        eprintln!("\n=== {tag} M={m} ({m} B/vec, {:.0} MB) build={build_s:.1}s ===", pq.mem_bytes() as f64 / 1e6);
         for &c in &args.rerank {
             let want = if c == 0 { args.k } else { c.max(args.k) };
             let t = Instant::now();
             let res: Vec<Vec<u32>> = (0..nq)
                 .into_par_iter()
                 .map(|q| {
-                    let cands = pq.adc_topc(qsub.row(q), want);
+                    let cands = pq.adc_topc(cq.row(q), want);
                     if c == 0 {
                         cands.into_iter().take(args.k).collect()
                     } else {
