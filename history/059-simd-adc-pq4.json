@@ -1,0 +1,29 @@
+{
+ "date": "2026-06-22T00:00:00Z",
+ "commit": "a5e7893",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, AVX-512, 8 vCPU)",
+ "experiment": "SIMD ADC fast-scan (FAISS PQ4 style): 4-bit PQ codes + core::simd swizzle_dyn (=pshufb) LUT, 16 vectors/instruction. Single-thread + 8-core scan throughput (Gcmp/s) vs popcount and scalar PQ. Random codes (kernel-isolated). src/bin/pq4simd.rs (nightly, NO unsafe). Task #2.",
+ "note": "OVERTURNS the scalar-PQ verdict (054). SIMD PQ4 via swizzle_dyn is ~13x faster than scalar PQ-ADC (0.14->1.83 Gcmp/s single-thread) - the FAISS pshufb trick works in safe Rust. And it is competitive-to-FASTER than popcount: 9x single-thread (1.83 vs 0.20), ~2x at 8-core scale (0.72 vs 0.36 at 10M) - because pq4 codes are 8 B/vec (16x smaller than the 128 B binary code), so they stay cache-resident while popcount hits the DRAM bandwidth wall. So gather does NOT always lose to popcount once the gather is SIMD (swizzle_dyn) AND the codes are tiny. CAVEATS: (1) this popcount is UNTILED - the real funnel tiles (016) to amortize the 128 B read across a query tile, which narrows the gap; a fair tiled-vs-tiled test is the follow-up. (2) 4-bit PQ recall is coarse (untested here; M=16 byte-PQ was 0.90 @ 054, 4-bit is lower) so it needs a rerank tier like the funnel. Net: SIMD ADC is a genuine high-QPS contender, not dominated - the parked question (050/054) resolved as competitive.",
+ "single_thread_gcmp": {
+  "popcount_128B": 0.2,
+  "scalar_pq_16B": 0.14,
+  "pq4_simd_8B": 1.83
+ },
+ "eight_core_gcmp": [
+  {
+   "n": 1000000,
+   "popcount": 0.66,
+   "pq4": 0.7
+  },
+  {
+   "n": 10000000,
+   "popcount": 0.36,
+   "pq4": 0.72
+  },
+  {
+   "n": 50000000,
+   "popcount": 0.37,
+   "pq4": 0.73
+  }
+ ]
+}
