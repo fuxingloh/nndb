@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-newsreader);
+}
+
+/* Ayu Dark design tokens — generates bg-panel, text-cyan, border-border, etc. */
+@theme {
+  --color-ink: #0a0d13;
+  --color-panel: #10141d;
+  --color-grid: #1c2330;
+  --color-border: #222a39;
+  --color-border-hover: #3d4a63;
+  --color-text: #d7dce5;
+  --color-dim: #8a93a5;
+  --color-body: #aab3c2;
+  --color-amber: #ffb454;
+  --color-cyan: #5ccfe6;
+  --color-rose: #f07178;
+  --color-green: #7fd962;
+  --color-violet: #d4bfff;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-ink);
+}
+
+body {
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-grid);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -7px;
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: var(--color-cyan);
+  border: 2px solid var(--color-ink);
+}
+input[type="range"]::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-grid);
+}
+input[type="range"]::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border: 2px solid var(--color-ink);
+  border-radius: 9999px;
+  background: var(--color-cyan);
+}

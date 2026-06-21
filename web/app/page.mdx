@@ -1,0 +1,81 @@
+---
+title: A 1-bit vector search engine
+description: What I learned optimizing in-memory top-k vector search from first principles — the binary funnel, and what turned out to be the best.
+---
+
+import { PageHeader, Stat } from "@/components/shell";
+import { ResidualLab } from "@/components/labs/residual-lab";
+import { FrontierLab } from "@/components/labs/frontier-lab";
+
+<PageHeader eyebrow="In-memory vector search · build & measure" title={<>A 1-bit vector<br />search engine</>}>
+I spent a while trying to make in-memory top-k vector search as fast as possible — load every vector into RAM and search there, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall, QPS, latency). Not by reading papers and reciting them, but by building each idea, measuring it on a real box, and keeping only what the numbers justified.
+
+This is what worked, why, and what I think is the best so far.
+</PageHeader>
+
+The headline result, on a single 8-core box, 1M × 1024-dim embeddings:
+
+<div className="my-6 grid grid-cols-3 gap-3">
+  <Stat value="0.995" label="recall@10" />
+  <Stat value="~960" label="QPS" />
+  <Stat value="8 ms" label="p50 latency" />
+</div>
+
+…at **128 MB** of searchable index, with no latency cliff under bursty load. Here's how it gets there.
+
+## The core idea: a binary funnel
+
+The expensive part of search is computing the distance to every vector. A 1024-dim float vector is 4 KB; scanning a million of them per query is ~4 GB of memory traffic — bound by bandwidth, not cleverness.
+
+So don't. **Squeeze each vector to one bit per dimension** (just the sign), which is 32× smaller — 128 bytes instead of 4 KB. Compare two of these 1-bit codes with *Hamming distance*: XOR them and count the differing bits. That's a coarse similarity, but it's blazing fast, because counting set bits is a single hardware instruction.
+
+Then a **funnel**: scan all N vectors with the cheap 1-bit comparison to get a shortlist of the few hundred best candidates, and only re-check *those* with the real full-precision vectors. Coarse-but-fast filters down; exact-but-slow ranks the survivors. Recall comes out ~0.99 — the rerank recovers what the coarse scan blurred.
+
+## Making the bits count
+
+One bit per dimension is brutal compression. Two free tricks make those bits carry far more signal — and the second is the single biggest lever I found.
+
+The first is a **random rotation** before binarizing: it spreads each vector's information evenly across the dimensions, so every sign bit carries independent signal instead of a few dimensions dominating.
+
+The second is the **residual**. Inside a cluster of similar vectors, they all sit near a common center — so they all share the same sign pattern, and the bits encode the *center*, which is identical for everyone and tells you nothing about which vector is which. Subtract the center (the centroid) first, and the bits suddenly encode how each vector *deviates*. Toggle it:
+
+<Card n="01" title="residual: subtract the shared center">
+  <ResidualLab />
+</Card>
+
+Free to compute (one subtraction), and worth **+3 to +9 recall points** — more than any learned-rotation method I tried (ITQ gave only ~+1.5). The whole game with 1-bit codes is not wasting bits on what every vector has in common.
+
+## The result: recall vs throughput
+
+Stack the funnel + rotation + residual + query-tiling (process queries in batches so the scan's memory read is amortized, +73% QPS), and you get a clean recall/QPS frontier. The interesting comparison is against **Product Quantization** (PQ), the standard alternative — it uses *fewer* bytes per vector but is much slower:
+
+<Card n="02" title="recall vs QPS — funnel vs PQ">
+  <FrontierLab />
+</Card>
+
+PQ wins on bytes-per-recall but loses ~7× on QPS at the same recall. The reason is one fact that decided this whole project: **popcount beats gather.** The funnel's per-vector op is `count_ones` — one vectorized instruction (`VPOPCNTDQ` does 8 at a time). PQ's per-vector op is a table lookup — a *gather*, which doesn't vectorize. Fewer bytes doesn't help if the operation on them is slow.
+
+## Serving it without a cliff
+
+Raw throughput is one thing; serving live, bursty traffic is another. A naive server runs one query at a time and, the moment load exceeds capacity, its latency collapses from milliseconds to *seconds* as the queue explodes.
+
+The fix is a **carousel**: instead of each query scanning the base alone, queries ride one continuously-cycling shared scan — they hop on, ride one revolution past every vector, and leave with their shortlist. Every vector read is shared by everyone aboard. The result is bounded tail latency with no cliff: ~5 ms at light load rising gracefully to ~50 ms at ~940 QPS (the box's real ceiling), where a naive server would already be at multi-second queues.
+
+## The frontier I didn't expect
+
+I'd concluded "popcount always beats gather, so 1-bit binary is throughput-optimal." That held — until I tried the *SIMD* version of PQ's lookup: 4-bit codes with an in-register shuffle table (`pshufb`, written in safe portable-SIMD Rust). It does 16 lookups per instruction, and because its codes are 8 bytes/vector — 16× smaller than the binary code — it stays in cache while the binary scan hits the memory wall. Result: **2–9× faster than an untiled popcount scan.**
+
+So gather isn't dead; it just needed to be vectorized *and* tiny. Whether SIMD-PQ beats the *tiled* funnel end-to-end is the open question I'd chase next — it's the one thing that might dethrone the binary funnel.
+
+## What didn't work (kept honestly)
+
+The negatives taught as much as the wins:
+
+- **Scalar PQ / OPQ** — better recall-per-byte, but the gather scan is 7–15× slower than popcount. Footprint-only.
+- **HNSW inside a cell** — a graph loses to a flat 1-bit scan at high dimension; graphs belong at the routing layer above, not inside the scan.
+- **Fewer scan bits for speed** — recall collapses (0.99→0.72) for ~8% QPS; the scan isn't the bottleneck once rerank is in play.
+- **bf16 / int8 rerank, register-tiling, prefetch** — all measured, all neutral-to-negative. The autovectorized popcount + exact rerank is already near the floor.
+
+## The best, in one line
+
+A **1-bit binary funnel** — rotation + residual to make the bits count, query-tiling for throughput, served by a **carousel** so latency never cliffs — does **~0.995 recall at ~960 QPS and 8 ms** on a single 8-core box, in 128 MB. The deepest lesson underneath it: on a CPU, the representation that wins is the one whose per-vector operation is a single SIMD instruction.
