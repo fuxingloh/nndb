@@ -1,0 +1,74 @@
+{
+ "date": "2026-06-22T00:00:00Z",
+ "commit": "ae5b475",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "experiment": "3-tier funnel: binary scan -> top-C1 by Hamming -> PQ-ADC re-rank (RAM) -> top-C2 -> exact rerank C2. Cohere 1M x 1024. Metric: recall@10 + exact reads (=C2, = SSD reads in disk regime) vs 2-tier baseline (binary->exact, C1 reads). src/bin/funnel3.rs. Task #1 (experiment B).",
+ "note": "B WORKS - if the PQ prune tier is accurate enough. 2-tier C1=1000 = 0.999 @ 1000 exact reads. 3-tier with M=64 PQ (64 B/vec in RAM): 0.989 recall at C2=128 = 7.8x FEWER reads, 0.955 at C2=64 = 15.6x fewer. M=32: 0.920 @ C2=128. M=16: too coarse (0.732 @ C2=128). So a 64 B/vec PQ prune tier (RAM, cache-resident) cuts the EXACT/SSD reads ~8x at ~0.99 recall - directly fixing the carousel x disk death-spiral (052), where C=1000 random SSD reads/query was the killer; now ~128. Tradeoff: PQ accuracy (M) vs reads saved. Only matters in the disk regime (RAM rerank is already cheap, 015/037).",
+ "baseline_2tier": {
+  "c1": 1000,
+  "recall": 0.999,
+  "exact_reads": 1000
+ },
+ "three_tier_c1_1000": [
+  {
+   "m": 16,
+   "c2": 64,
+   "recall": 0.5708
+  },
+  {
+   "m": 16,
+   "c2": 128,
+   "recall": 0.7317
+  },
+  {
+   "m": 16,
+   "c2": 256,
+   "recall": 0.8724
+  },
+  {
+   "m": 16,
+   "c2": 500,
+   "recall": 0.9695
+  },
+  {
+   "m": 32,
+   "c2": 64,
+   "recall": 0.8177
+  },
+  {
+   "m": 32,
+   "c2": 128,
+   "recall": 0.9199
+  },
+  {
+   "m": 32,
+   "c2": 256,
+   "recall": 0.9754
+  },
+  {
+   "m": 32,
+   "c2": 500,
+   "recall": 0.9956
+  },
+  {
+   "m": 64,
+   "c2": 64,
+   "recall": 0.9549
+  },
+  {
+   "m": 64,
+   "c2": 128,
+   "recall": 0.9885
+  },
+  {
+   "m": 64,
+   "c2": 256,
+   "recall": 0.9973
+  },
+  {
+   "m": 64,
+   "c2": 500,
+   "recall": 0.999
+  }
+ ]
+}
