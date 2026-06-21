@@ -1,0 +1,69 @@
+{
+ "date": "2026-06-22T00:00:00Z",
+ "commit": "80c66e4",
+ "machine": "granite-rapids (c8i.2xlarge, Xeon 6975P-C, 8 vCPU)",
+ "experiment": "Bit-floor: scan fewer 1-bit dims to raise QPS. binary + rotate2 + residual, scan-bits sweep x C, Cohere 1M. (Task #3)",
+ "note": "NEGATIVE as a QPS play. 4x fewer scan words (1024->256 bits) buys only ~+8% QPS (1028->1114 at C=200) while recall COLLAPSES (0.995->0.72 at C=500). The scan is NOT the batch bottleneck at these N/C - the rerank (C f32 gathers) + heap dominate - so shrinking the scan barely moves total QPS, and residual cannot hold recall at 256b for 1M (too much competition). The 049/050 bandwidth-wall QPS gain does not materialize because rerank, not scan, is the cost at C>=200. Confirms 051 (fewer bits = latency not QPS). Bit-floor is a dead end for QPS; the lever is NOT fewer bits.",
+ "sweep": [
+  {
+   "bits": 1024,
+   "c": 200,
+   "recall": 0.978,
+   "qps": 1028
+  },
+  {
+   "bits": 1024,
+   "c": 500,
+   "recall": 0.9952,
+   "qps": 968
+  },
+  {
+   "bits": 768,
+   "c": 200,
+   "recall": 0.9412,
+   "qps": 918
+  },
+  {
+   "bits": 768,
+   "c": 500,
+   "recall": 0.9816,
+   "qps": 885
+  },
+  {
+   "bits": 512,
+   "c": 200,
+   "recall": 0.8487,
+   "qps": 1016
+  },
+  {
+   "bits": 512,
+   "c": 500,
+   "recall": 0.9296,
+   "qps": 977
+  },
+  {
+   "bits": 384,
+   "c": 200,
+   "recall": 0.7527,
+   "qps": 1051
+  },
+  {
+   "bits": 384,
+   "c": 500,
+   "recall": 0.8584,
+   "qps": 1014
+  },
+  {
+   "bits": 256,
+   "c": 200,
+   "recall": 0.5883,
+   "qps": 1114
+  },
+  {
+   "bits": 256,
+   "c": 500,
+   "recall": 0.7155,
+   "qps": 1064
+  }
+ ]
+}
