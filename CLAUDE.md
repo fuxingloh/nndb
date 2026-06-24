@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there, measured the ANN-Benchmarks way (recall/QPS/latency). `database/` is the Rust engine; `web/` will host the eval writeup (not built yet).
+A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there, measured the ANN-Benchmarks way (recall/QPS/latency). `database/` is the Rust engine; `web/` is the writeup — a Next.js + MDX learning article (Lab + Prose, Ayu-dark) at `web/app/page.mdx`, which also **serves every `history/` entry as a readable note at `/experiments/<slug>`** (dynamic markdown route reading `history/` directly via `web/lib/experiments.ts`). `history/` stays the source of truth — the measure scripts write there and the site reads from there; don't move it.
 
 **Scope (important):** this engine models the efficient *exact* search **inside a single IVF cell/shard** — the coarse quantizer that routes a query to a cell lives at a layer above us. So the goal is making the within-cell full scan as fast as possible (SIMD, memory layout, cache). Approximate-index layers (IVF router, HNSW) and quantization are intentionally **out of scope for this component** — open questions about them are parked under `questions/` (`IVF.md`, `HNSW.md`, `quantization.md`), not built here.
 
@@ -34,7 +34,7 @@ Each improvement is recorded as a numbered pair in `history/`: `NNN-<descriptive
 - `history/measure.sh <out.json> <label>` — in-process algorithm numbers (recall, QPS, latency, memory).
 - `history/measure-serving.sh <out.json> <label>` — starts the server and runs a concurrency sweep for user-facing latency.
 
-When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale.
+When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale. New `history/*.md` entries appear on the site automatically (the `/experiments` route lists everything in `history/`); keep the first line a single `# NNN — Title` H1 so the slug/title render correctly.
 
 ## Resources
 
