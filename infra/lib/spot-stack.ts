@@ -13,12 +13,18 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
  *   -c maxSpotPrice=0.40  optional $/hr cap (default: on-demand price)
  *   -c volumeGb=30        root EBS size
  */
+interface SpotStackProps extends cdk.StackProps {
+  /** Per-stack instance type (used by the sweep, where context is shared across stacks). */
+  instanceTypeOverride?: string;
+}
+
 export class SpotStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: SpotStackProps) {
     super(scope, id, props);
 
     const c = this.node;
-    const instanceType: string = c.tryGetContext('instanceType') ?? 'c8i.2xlarge';
+    const instanceType: string =
+      props?.instanceTypeOverride ?? c.tryGetContext('instanceType') ?? 'c8i.2xlarge';
     const keyPairName: string | undefined = c.tryGetContext('keyPairName');
     const sshCidr: string = c.tryGetContext('sshCidr') ?? '0.0.0.0/0';
     const maxSpotPrice: string | undefined = c.tryGetContext('maxSpotPrice');
@@ -55,11 +61,16 @@ export class SpotStack extends cdk.Stack {
     // System-level deps as root; Rust is installed per-user by run-on-aws.sh.
     userData.addCommands('dnf install -y git gcc perf || true');
 
+    // Pick the AMI arch from the instance family: the processor letter is the
+    // char right after the generation digit(s) — 'g' = Graviton (arm64),
+    // 'i' = Intel, 'a' = AMD (both x86_64). e.g. c8g→arm64, c8a/m8i→x86_64.
+    const procLetter = (instanceType.split('.')[0].match(/^[a-z]+\d+([a-z])/)?.[1]) ?? 'i';
+    const cpuType =
+      procLetter === 'g' ? ec2.AmazonLinuxCpuType.ARM_64 : ec2.AmazonLinuxCpuType.X86_64;
+
     const lt = new ec2.LaunchTemplate(this, 'Lt', {
       instanceType: new ec2.InstanceType(instanceType),
-      machineImage: ec2.MachineImage.latestAmazonLinux2023({
-        cpuType: ec2.AmazonLinuxCpuType.X86_64,
-      }),
+      machineImage: ec2.MachineImage.latestAmazonLinux2023({ cpuType }),
       keyPair,
       userData,
       blockDevices: [
