@@ -12,9 +12,12 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "A 1-bit vector search engine",
+  title: {
+    default: "Pushing vector search QPS & latency to the ceiling",
+    template: "%s",
+  },
   description:
-    "What I built optimizing in-memory top-k vector search from first principles — the binary funnel, and what turned out to be the best.",
+    "A first-principles study of how far one CPU box can push in-memory top-k vector search — the binary funnel, and what turned out to be the best.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

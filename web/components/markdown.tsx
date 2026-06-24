@@ -22,7 +22,7 @@ export function Markdown({ children }: { children: string }) {
           <pre className="my-4 overflow-x-auto rounded-lg border border-border bg-panel p-3 font-mono text-[12px] leading-6 text-text [&_code]:bg-transparent [&_code]:p-0" {...props} />
         ),
         blockquote: (props) => (
-          <blockquote className="my-4 border-l-2 border-amber bg-grid px-4 py-2 text-[14px] leading-6 text-text [&>p]:my-1" {...props} />
+          <blockquote className="my-4 rounded-r-md border-l-[3px] border-amber bg-grid/60 px-4 py-3 text-[14px] leading-6 text-body [&>p]:my-0 [&_strong]:text-text" {...props} />
         ),
         table: (props) => (
           <div className="my-5 overflow-x-auto">
