@@ -61,7 +61,7 @@ export function ResidualLab() {
         {/* centroid marker */}
         <circle cx={sx(cx)} cy={sy(cy)} r={4} fill="none" stroke="#8a93a5" strokeDasharray="2 2" />
         <text x={sx(cx) + 7} y={sy(cy) - 6} className="fill-dim font-mono" fontSize={9}>
-          centroid
+          cell centroid
         </text>
         {/* points, colored by their 2-bit sign code */}
         {PTS.map((p, i) => (

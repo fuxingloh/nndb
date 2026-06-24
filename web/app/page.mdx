@@ -6,11 +6,13 @@ description: How far one CPU box can go on in-memory top-k vector search — fro
 import { PageHeader, Stat } from "@/components/shell";
 import { JourneyLab } from "@/components/labs/journey-lab";
 import { BytesLab } from "@/components/labs/bytes-lab";
+import { FunnelDiagram } from "@/components/labs/funnel-diagram";
 import { ResidualLab } from "@/components/labs/residual-lab";
 import { KernelLab } from "@/components/labs/kernel-lab";
 import { FrontierLab } from "@/components/labs/frontier-lab";
+import { ServingLab } from "@/components/labs/serving-lab";
 
-<PageHeader eyebrow="In-memory vector search · build & measure" title={<>Pushing a CPU<br />to its QPS ceiling</>}>
+<PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
 
 It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-one numbered experiments later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/experiments](/experiments).
@@ -30,6 +32,8 @@ All numbers below are **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box
   <JourneyLab />
 </Card>
 
+> **Scope — one IVF cell.** This is the *within-cell* engine. A real index is IVF: k-means splits the corpus into thousands of clusters, each with a centroid, and a coarse router sends a query to just a few of them. Everything here is making the scan *inside one cluster* as fast as possible — the router that picks clusters is a layer above (out of scope). That assumption matters most for the residual below: each cluster has its own centroid to subtract.
+
 ## The wall is memory, not compute
 
 Brute force — distance to all 1M vectors per query — does ~9 QPS. The instinct is to speed up the kernel (FMA, AVX-512, batching); I did, and it roughly doubled, then stopped. The bottleneck was never compute. It's **memory bandwidth**: a query scans the whole base, and at 4 KB/vector that's 4 GB moved from RAM every time. You can't out-compute the bus.
@@ -44,9 +48,13 @@ That reframes everything into two levers: **send fewer bytes**, or **spend fewer
 
 Fewest bytes: keep one **sign bit per dimension** — 32× smaller. Compare two of these codes with Hamming distance (XOR, count differing bits). It's coarse, so use it as a **funnel**: scan all N with the 1-bit code for a few-hundred shortlist, then re-rank only those with the real vectors. Recall ~0.99, QPS 9 → ~500 — the biggest single step. ([009](/experiments/009-binary-rerank))
 
+<Card n="03" title="the funnel — coarse filters, exact ranks">
+  <FunnelDiagram />
+</Card>
+
 ## Lever two: the instruction matters more than the math
 
-Counting set bits is `VPOPCNTDQ` — one SIMD instruction over eight 64-bit words. A "smarter" scheme with better recall-per-bit (asymmetric scoring via a lookup table) *lost by ~30×*, because a table lookup is a **gather** the CPU can't vectorize. **The winning representation is the one whose per-vector op is a single instruction** — the law that decided nearly every later call. ([010–012](/experiments/011-asym-lut))
+Counting set bits is `VPOPCNTDQ` — one SIMD instruction over eight 64-bit words. A "smarter" scheme with better recall-per-bit (asymmetric scoring via a lookup table) *lost* — because a table lookup is a **gather** the CPU can't vectorize, while popcount stays one instruction. The chart makes it concrete: the same job, three different per-vector instructions, and throughput tracks the *instruction*, not the math. **The representation that wins is the one whose op is a single SIMD instruction** — the law that decided nearly every later call. ([010–012](/experiments/011-asym-lut))
 
 <Card n="04" title="same job, different instruction (scan throughput)">
   <KernelLab />
@@ -54,9 +62,9 @@ Counting set bits is `VPOPCNTDQ` — one SIMD instruction over eight 64-bit word
 
 ## Making the bits count
 
-One bit/dim is brutal, so don't waste bits. A **random rotation** spreads information evenly across dimensions (free recall). The bigger lever is the **residual**: vectors in a cluster share a center, so their sign bits encode that shared center — useless. Subtract the centroid first and the bits encode each vector's *deviation*. **+3–9 recall points**, free. Toggle it: ([026](/experiments/026-rabitq-rotation), [046](/experiments/046-cell-size-residual))
+One bit/dim is brutal, so don't waste bits. A **random rotation** spreads information evenly across dimensions (free recall). The bigger lever is the **residual**, and it's exactly where the IVF assumption pays off: inside a cluster the vectors hug the cell's centroid, so their raw sign bits just re-encode that shared center — useless for telling them apart. IVF already gives every one of its thousands of cells a k-means centroid; subtract the cell's own centroid and the bits encode each vector's *deviation* instead. **+3–9 recall points**, free. Toggle it: ([026](/experiments/026-rabitq-rotation), [046](/experiments/046-cell-size-residual))
 
-<Card n="03" title="residual — subtract the shared center">
+<Card n="05" title="residual — subtract the cell's center">
   <ResidualLab />
 </Card>
 
@@ -72,13 +80,17 @@ The scan is bandwidth-bound, so reuse each loaded code: compare it against a **t
 
 Funnel + rotation + residual + tiling gives a clean frontier. Against Product Quantization (the textbook quantizer, *fewer* bytes), the funnel wins ~7× on QPS at equal recall — lever two again (PQ's op is a gather). ([051](/experiments/051-stacked-engine), [054](/experiments/054-product-quantization))
 
-<Card n="05" title="recall vs QPS — funnel vs PQ">
+<Card n="06" title="recall vs QPS — funnel vs PQ">
   <FrontierLab />
 </Card>
 
 ## Serving without a cliff
 
-A naive one-query-at-a-time server cliffs from ms to *seconds* the moment load exceeds capacity. The **carousel** has queries ride one shared, continuously-cycling scan — every byte read is shared by everyone aboard. Latency stays bounded: ~5 ms light, ~50 ms at the ~940 QPS ceiling, no cliff. ([039–041](/experiments/041-carousel-fanout-frontier))
+A naive one-query-at-a-time server cliffs from ms to *seconds* the moment load exceeds capacity. The **carousel** has queries ride one shared, continuously-cycling scan — every byte read is shared by everyone aboard. Latency stays bounded: ~5 ms light, ~35 ms at the ~940 QPS ceiling, no cliff. ([039–041](/experiments/041-carousel-fanout-frontier))
+
+<Card n="07" title="latency vs load — naive cliffs, carousel holds">
+  <ServingLab />
+</Card>
 
 ## Things I tried but don't use
 
