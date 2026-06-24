@@ -52,13 +52,13 @@ export function FrontierLab() {
   return (
     <div>
       <div className="mb-3 flex gap-2">
-        <Toggle on={funnel} set={setFunnel} color="#5ccfe6" label="binary funnel (128 B)" />
-        <Toggle on={pq} set={setPq} color="#ffb454" label="PQ (16–64 B)" />
+        <Toggle on={funnel} set={setFunnel} color="#818cf8" label="binary funnel (128 B)" />
+        <Toggle on={pq} set={setPq} color="#f4b860" label="PQ (16–64 B)" />
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
         {yticks.map((r) => (
           <g key={r}>
-            <line x1={PAD} y1={sy(r)} x2={W - PAD} y2={sy(r)} stroke="#1c2330" />
+            <line x1={PAD} y1={sy(r)} x2={W - PAD} y2={sy(r)} stroke="#1b1b21" />
             <text x={PAD - 8} y={sy(r) + 3} textAnchor="end" fontSize={9} className="fill-dim font-mono">
               {r.toFixed(2)}
             </text>
@@ -75,11 +75,11 @@ export function FrontierLab() {
         <text x={12} y={H / 2} textAnchor="middle" fontSize={10} className="fill-dim" transform={`rotate(-90 12 ${H / 2})`}>
           recall@10 →
         </text>
-        <Series pts={PQ} color="#ffb454" show={pq} />
-        <Series pts={FUNNEL} color="#5ccfe6" show={funnel} />
+        <Series pts={PQ} color="#f4b860" show={pq} />
+        <Series pts={FUNNEL} color="#818cf8" show={funnel} />
       </svg>
       <p className="mt-2 text-[13px] leading-6 text-dim">
-        Up-and-right is better. The funnel holds ~0.99 recall at <span className="text-cyan">~900 QPS</span>;
+        Up-and-right is better. The funnel holds ~0.99 recall at <span className="text-accent">~900 QPS</span>;
         PQ reaches the same recall only near <span className="text-amber">~140 QPS</span> — 7× slower, because
         its ADC is a gather, not a popcount.
       </p>

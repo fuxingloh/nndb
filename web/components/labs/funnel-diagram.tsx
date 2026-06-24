@@ -2,9 +2,9 @@
 // candidates, then an exact rerank ranks only those. Coarse-but-fast filters;
 // exact-but-slow ranks the survivors.
 const STAGES = [
-  { w: 100, count: "1,000,000 vectors", op: "1-bit Hamming scan · 128 B/vec · popcount", color: "#3d4a63" },
-  { w: 34, count: "~500 candidates", op: "exact f32 rerank · 4 KB/vec · only these", color: "#5ccfe6" },
-  { w: 9, count: "top 10", op: "the answer", color: "#7fd962" },
+  { w: 100, count: "1,000,000 vectors", op: "1-bit Hamming scan · 128 B/vec · popcount", color: "#3b3b46" },
+  { w: 34, count: "~500 candidates", op: "exact f32 rerank · 4 KB/vec · only these", color: "#818cf8" },
+  { w: 9, count: "top 10", op: "the answer", color: "#34d399" },
 ];
 
 export function FunnelDiagram() {
@@ -20,8 +20,8 @@ export function FunnelDiagram() {
         </div>
       ))}
       <p className="border-t border-border pt-3 text-[13px] leading-6 text-dim">
-        Every vector gets the <span className="text-cyan">cheap</span> 1-bit comparison; only the
-        few hundred survivors pay for the <span className="text-cyan">exact</span> one. You read
+        Every vector gets the <span className="text-accent">cheap</span> 1-bit comparison; only the
+        few hundred survivors pay for the <span className="text-accent">exact</span> one. You read
         4 KB/vector for 500 vectors, not a million.
       </p>
     </div>

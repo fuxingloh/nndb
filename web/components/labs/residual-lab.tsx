@@ -18,7 +18,7 @@ const W = 360;
 const H = 300;
 const PAD = 36;
 const codeColor = (c: string) =>
-  ({ "++": "#5ccfe6", "+-": "#ffb454", "-+": "#7fd962", "--": "#f07178" })[c] ?? "#8a93a5";
+  ({ "++": "#818cf8", "+-": "#f4b860", "-+": "#34d399", "--": "#fb7185" })[c] ?? "#7d7d88";
 
 export function ResidualLab() {
   const [residual, setResidual] = useState(false);
@@ -42,7 +42,7 @@ export function ResidualLab() {
       <div className="mb-3 flex items-center justify-between">
         <button
           onClick={() => setResidual((r) => !r)}
-          className="rounded-md border border-border-hover bg-grid px-3 py-1.5 font-mono text-xs text-text transition-colors hover:border-cyan"
+          className="rounded-md border border-border-hover bg-grid px-3 py-1.5 font-mono text-xs text-text transition-colors hover:border-accent"
         >
           {residual ? "● residual (vector − centroid)" : "○ raw vectors"}
         </button>
@@ -56,10 +56,10 @@ export function ResidualLab() {
 
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
         {/* sign-axis crosshair (the binarization boundary) */}
-        <line x1={sx(ox)} y1={PAD} x2={sx(ox)} y2={H - PAD} stroke="#222a39" strokeWidth={1} />
-        <line x1={PAD} y1={sy(oy)} x2={W - PAD} y2={sy(oy)} stroke="#222a39" strokeWidth={1} />
+        <line x1={sx(ox)} y1={PAD} x2={sx(ox)} y2={H - PAD} stroke="#27272f" strokeWidth={1} />
+        <line x1={PAD} y1={sy(oy)} x2={W - PAD} y2={sy(oy)} stroke="#27272f" strokeWidth={1} />
         {/* centroid marker */}
-        <circle cx={sx(cx)} cy={sy(cy)} r={4} fill="none" stroke="#8a93a5" strokeDasharray="2 2" />
+        <circle cx={sx(cx)} cy={sy(cy)} r={4} fill="none" stroke="#7d7d88" strokeDasharray="2 2" />
         <text x={sx(cx) + 7} y={sy(cy) - 6} className="fill-dim font-mono" fontSize={9}>
           cell centroid
         </text>

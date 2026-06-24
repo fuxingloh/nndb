@@ -12,11 +12,11 @@ export default function ExperimentsIndex() {
   return (
     <div>
       <Link href="/" className="font-mono text-xs text-dim hover:text-text">
-        <span className="text-cyan">←</span> the writeup
+        <span className="text-accent">←</span> the writeup
       </Link>
       <header className="mt-6 mb-10 border-b border-border pb-8">
         <Eyebrow>Experiment log · {items.length} entries</Eyebrow>
-        <h1 className="mt-3 font-serif text-4xl font-medium italic text-text">Experiments</h1>
+        <h1 className="mt-3 text-4xl font-semibold tracking-tight text-text">Experiments</h1>
         <p className="mt-4 max-w-2xl text-[16px] leading-7 text-body">
           Every idea was a numbered, measured entry — wins and dead ends alike. The writeup
           curates what worked; this is the raw trail, in order.

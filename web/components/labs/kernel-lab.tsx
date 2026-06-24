@@ -4,9 +4,9 @@
 // A table gather is slow; popcount is one SIMD instruction; a SIMD lookup (pshufb) on
 // tiny 4-bit codes is faster still — the frontier that surprised me.
 const BARS = [
-  { name: "scalar PQ — table gather", g: 0.14, color: "#f07178" },
-  { name: "binary — popcount (VPOPCNTDQ)", g: 0.20, color: "#5ccfe6" },
-  { name: "SIMD PQ4 — pshufb (8 B/vec)", g: 1.83, color: "#7fd962" },
+  { name: "scalar PQ — table gather", g: 0.14, color: "#fb7185" },
+  { name: "binary — popcount (VPOPCNTDQ)", g: 0.20, color: "#818cf8" },
+  { name: "SIMD PQ4 — pshufb (8 B/vec)", g: 1.83, color: "#34d399" },
 ];
 const max = Math.max(...BARS.map((b) => b.g));
 

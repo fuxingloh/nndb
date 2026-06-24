@@ -7,7 +7,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
     p: (props) => <p className="my-4 text-[17px] leading-8 text-body" {...props} />,
     h2: (props) => (
-      <h2 className="mt-14 mb-3 font-serif text-3xl font-medium italic text-text" {...props} />
+      <h2 className="mt-14 mb-3 text-[28px] font-semibold tracking-tight text-text" {...props} />
     ),
     h3: (props) => (
       <h3 className="mt-8 mb-2 font-mono text-sm uppercase tracking-wider text-amber" {...props} />
@@ -27,7 +27,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
       />
     ),
     a: ({ href, ...rest }) => (
-      <Link href={href ?? "#"} className="text-cyan hover:underline" {...rest} />
+      <Link href={href ?? "#"} className="text-accent hover:underline" {...rest} />
     ),
     blockquote: (props) => (
       <blockquote

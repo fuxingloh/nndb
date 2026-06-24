@@ -24,7 +24,7 @@ export function JourneyLab() {
                 <span className="text-dim">{s.entry} ·</span> {s.name}
               </span>
               <span className="tabular-nums">
-                <span className={last ? "text-cyan" : "text-text"}>{s.qps} QPS</span>
+                <span className={last ? "text-accent" : "text-text"}>{s.qps} QPS</span>
                 <span className="ml-2 text-dim">{Math.round(s.qps / base)}×</span>
               </span>
             </div>
@@ -34,7 +34,7 @@ export function JourneyLab() {
                   className="h-full rounded"
                   style={{
                     width: `${Math.max(1.5, (s.qps / maxQ) * 100)}%`,
-                    background: last ? "#5ccfe6" : "#3d4a63",
+                    background: last ? "#818cf8" : "#3b3b46",
                   }}
                 />
               </div>
@@ -47,7 +47,7 @@ export function JourneyLab() {
         );
       })}
       <p className="border-t border-border pt-3 text-[13px] leading-6 text-dim">
-        Bar length is QPS (linear). The throughput goes <span className="text-cyan">~107×</span> from
+        Bar length is QPS (linear). The throughput goes <span className="text-accent">~107×</span> from
         9 to 963 — yet the <span className="text-text">recall column barely moves</span> (≈ 0.99
         throughout). That&apos;s the whole point: massive speed, ~no recall lost.
       </p>

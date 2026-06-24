@@ -35,12 +35,12 @@ export function ServingLab() {
     <div>
       <div className="mb-3 flex gap-3 font-mono text-[11px]">
         <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-rose" />per-query (naive)</span>
-        <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-cyan" />carousel</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full bg-accent" />carousel</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
         {yticks.map((ms) => (
           <g key={ms}>
-            <line x1={PAD} y1={sy(ms)} x2={W - PAD} y2={sy(ms)} stroke="#1c2330" />
+            <line x1={PAD} y1={sy(ms)} x2={W - PAD} y2={sy(ms)} stroke="#1b1b21" />
             <text x={PAD - 8} y={sy(ms) + 3} textAnchor="end" fontSize={9} className="fill-dim font-mono">{ms}ms</text>
           </g>
         ))}
@@ -49,13 +49,13 @@ export function ServingLab() {
         ))}
         <text x={W / 2} y={H - 6} textAnchor="middle" fontSize={10} className="fill-dim">offered QPS →</text>
         <text x={12} y={H / 2} textAnchor="middle" fontSize={10} className="fill-dim" transform={`rotate(-90 12 ${H / 2})`}>p50 latency (log) →</text>
-        <Line pts={PERQUERY} color="#f07178" dash />
-        <Line pts={CAROUSEL} color="#5ccfe6" />
+        <Line pts={PERQUERY} color="#fb7185" dash />
+        <Line pts={CAROUSEL} color="#818cf8" />
       </svg>
       <p className="mt-2 text-[13px] leading-6 text-dim">
         Same throughput ceiling, opposite tails. Past ~500 QPS the naive server
         <span className="text-rose"> cliffs to seconds</span>; the carousel stays
-        <span className="text-cyan"> bounded</span> (~35 ms at 1000 QPS). Note the log y-axis.
+        <span className="text-accent"> bounded</span> (~35 ms at 1000 QPS). Note the log y-axis.
       </p>
     </div>
   );

@@ -3,37 +3,50 @@
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-serif: var(--font-newsreader);
 }
 
-/* Ayu Dark design tokens — generates bg-panel, text-cyan, border-border, etc. */
+/* Modern dark palette — clean neutral near-black, one indigo accent, a small,
+   cohesive set of data hues. Token names generate Tailwind utilities (bg-panel,
+   text-accent, border-border, …). */
 @theme {
-  --color-ink: #0a0d13;
-  --color-panel: #10141d;
-  --color-grid: #1c2330;
-  --color-border: #222a39;
-  --color-border-hover: #3d4a63;
-  --color-text: #d7dce5;
-  --color-dim: #8a93a5;
-  --color-body: #aab3c2;
-  --color-amber: #ffb454;
-  --color-cyan: #5ccfe6;
-  --color-rose: #f07178;
-  --color-green: #7fd962;
-  --color-violet: #d4bfff;
+  --color-ink: #0a0a0c; /* page background */
+  --color-panel: #131318; /* card / surface */
+  --color-grid: #1b1b21; /* track / subtle fill */
+  --color-border: #27272f; /* hairline */
+  --color-border-hover: #3b3b46;
+  --color-text: #f3f3f6; /* headings / strong */
+  --color-body: #b6b6c1; /* body copy */
+  --color-dim: #7d7d88; /* muted / labels */
+
+  --color-accent: #818cf8; /* indigo — links, primary series, highlights */
+  --color-amber: #f4b860; /* eyebrows + a data hue */
+  --color-green: #34d399; /* positive */
+  --color-rose: #fb7185; /* negative */
+  --color-violet: #a78bfa;
 }
 
 :root {
   color-scheme: dark;
 }
 
-html,
-body {
-  background: var(--color-ink);
+html {
+  scroll-behavior: smooth;
 }
 
+html,
 body {
-  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  background-color: var(--color-ink);
+}
+
+/* A whisper of depth at the top — modern, not loud. */
+body {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  background-image: radial-gradient(60rem 32rem at 50% -8rem, rgba(129, 140, 248, 0.07), transparent 70%);
+  background-repeat: no-repeat;
+}
+
+::selection {
+  background: rgba(129, 140, 248, 0.28);
 }
 
 input[type="range"] {
@@ -54,7 +67,7 @@ input[type="range"]::-webkit-slider-thumb {
   height: 16px;
   width: 16px;
   border-radius: 9999px;
-  background: var(--color-cyan);
+  background: var(--color-accent);
   border: 2px solid var(--color-ink);
 }
 input[type="range"]::-moz-range-track {
@@ -67,5 +80,5 @@ input[type="range"]::-moz-range-thumb {
   width: 16px;
   border: 2px solid var(--color-ink);
   border-radius: 9999px;
-  background: var(--color-cyan);
+  background: var(--color-accent);
 }
