@@ -152,4 +152,17 @@ It's a **two-tier wall**. A sub-full-socket box shares the socket's 12 memory ch
 
 A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
 
+## What's next — from one node to a cluster
+
+Everything here is *one node*. But that's the point: once a single node is fully characterized — QPS, p50/p99, recall, the bandwidth ceiling, $/QPS — you can **design the whole embedding-search cluster on paper**, because the cluster is just these numbers tiled out. The directions below are deliberately a size up — full-infra, cluster-scale experiments that are too big for this study, but already on the map for when it grows into one.
+
+- **Full IVF, not one cell.** This entire study lives *inside* a single IVF cell; a real index is thousands of them under a coarse router. The open questions move up a layer: how cell count and `nprobe` trade recall against the fraction of the corpus actually scanned, how to keep cell sizes balanced, and how the router itself is served.
+- **Elastic placement (k8s).** Treat the fleet as bin-packing: saturate each node's cores, then fill its *spare* RAM with resident centroids rather than letting it sit idle (064 showed the box is CPU-bound with RAM to spare). Any node with free memory should host more cells to lift aggregate QPS.
+- **Adaptive RAM ⇄ disk tiering.** Keep the 1-bit codes and hot centroids in RAM; let the cold f32 rerank store live on SSD and page back on demand (045 measured the economics). What's "hot" is decided against an explicit QPS / latency / recall budget.
+- **Latency-driven autoscaling.** Drive node count from p50/p99 SLOs and QPS head-room — and scale on how *full* a centroid is getting, not just raw load, so capacity is added *before* a cell thrashes, without churning RAM through constant insert / delete / rebalance.
+- **Adaptive recall.** Recall is a dial (shown per-node). At cluster scale, spend *idle* capacity on it: when QPS is below the ceiling, probe more cells for higher recall; tighten back under load. Recall that floats with utilization.
+- **Matryoshka codes.** Truncatable embeddings (027 hinted at it with prefix scans) to stream even fewer bytes per query — the most direct next attack on the bandwidth wall 064 just drew.
+
+None of these are built here — they're the cluster-scale chapter. But the single-node numbers in this writeup are exactly the inputs that make them designable rather than guessed.
+
 → Browse the full trail: [**all 64 experiments**](/experiments)
