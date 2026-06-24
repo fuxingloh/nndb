@@ -1,0 +1,62 @@
+{
+  "date": "2026-06-24T15:38:05Z",
+  "commit": "ab14eb6",
+  "label": "c8a scaling spectrum \u2014 DDR5 bandwidth wall",
+  "vendor": "AMD Zen5 (Turin), c8a, ap-northeast-1",
+  "dataset": "cohere v3 1M x 1024",
+  "workload": "1-bit funnel rotate2/residual/tile8/rerank500, recall held 0.9952",
+  "finding": "compute-bound ~289 QPS/core to ~32c; shared-socket plateau ~13.6k (245 GB/s) at 64-96c; full-socket breakout 19,881 (358 GB/s, 58% of 614 GB/s DDR5-6400 peak) at 192c",
+  "saturated_ceiling": "QPS = achievable_BW / (S/T + R) = 358e9 / 18e6 = 19,900 ~= measured 19,881",
+  "ddr5_6400_peak_gbs": 614,
+  "points": [
+    {
+      "size": "2xlarge",
+      "cores": 8,
+      "qps": 2310,
+      "qps_per_core": 289,
+      "p50": 3.14
+    },
+    {
+      "size": "4xlarge",
+      "cores": 16,
+      "qps": 4462,
+      "qps_per_core": 279,
+      "p50": 3.2
+    },
+    {
+      "size": "8xlarge",
+      "cores": 32,
+      "qps": 7658,
+      "qps_per_core": 239,
+      "p50": 3.18
+    },
+    {
+      "size": "12xlarge",
+      "cores": 48,
+      "qps": 9710,
+      "qps_per_core": 202,
+      "p50": 3.15
+    },
+    {
+      "size": "16xlarge",
+      "cores": 64,
+      "qps": 13670,
+      "qps_per_core": 214,
+      "p50": 3.16
+    },
+    {
+      "size": "24xlarge",
+      "cores": 96,
+      "qps": 13555,
+      "qps_per_core": 141,
+      "p50": 3.26
+    },
+    {
+      "size": "48xlarge",
+      "cores": 192,
+      "qps": 19881,
+      "qps_per_core": 104,
+      "p50": 3.57
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import { FrontierLab } from "@/components/labs/frontier-lab";
 import { ExactLab } from "@/components/labs/exact-lab";
 import { ServingLab } from "@/components/labs/serving-lab";
 import { HardwareLab } from "@/components/labs/hardware-lab";
+import { ScalingLab } from "@/components/labs/scaling-lab";
 
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
@@ -137,8 +138,18 @@ The funnel is compute-bound on popcount, so throughput is two multiplicative lev
 
 That gives a clean buying rule. Throughput `≈ C·P/N` (per-core rate × physical cores ÷ vectors scanned), so **`QPS/$ ≈ C·P / (N·price)` → buy the densest AVX-512 *physical* cores per dollar.** And since the hot scan is only **128 MB** (the f32 rerank store is ~4 GB, still tiny), you want *minimal* RAM — compute-optimized, not memory. The 12–28 GB of slack on each box is the IVF lever: **RAM holds all the cells, cores scan only the few a query touches** — so size RAM for the corpus and cores for the QPS, independently.
 
+## How far one box scales — the bandwidth wall
+
+Take the winner (AMD Zen5) and push *one* family across its whole range, 8 → 192 cores, same engine and recall (0.9952). The funnel is compute-bound only at the small end (~289 QPS/core); then DDR5-6400 saturates and cores stop converting into throughput ([064](/experiments/064-c8a-scaling-bandwidth-roofline)).
+
+<Card n="10" title="c8a scaling — QPS vs cores, until DDR5 saturates">
+  <ScalingLab />
+</Card>
+
+It's a **two-tier wall**. A sub-full-socket box shares the socket's 12 memory channels with co-tenants and pins at **~13.6k QPS** (64c and 96c land at the same number — more cores, no more throughput, ~245 GB/s). Only the **full-socket 48xlarge** gets all the channels and breaks out to **19,881 QPS** (~358 GB/s, 58% of the 614 GB/s peak) — and even that is sublinear (2× cores → 1.47× QPS). The reason is simple: at scale every query streams the whole 128 MB of codes, so once the bus is full, that's the ceiling — `achievable_BW ÷ 18 MB/query`. Past the knee it's the memory bus, not the cores. (Which is also why small instances win perf-per-buck — scale *out*, not up.)
+
 ## The best, in one line
 
 A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
 
-→ Browse the full trail: [**all 63 experiments**](/experiments)
+→ Browse the full trail: [**all 64 experiments**](/experiments)
