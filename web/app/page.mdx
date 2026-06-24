@@ -13,7 +13,7 @@ import { FrontierLab } from "@/components/labs/frontier-lab";
 <PageHeader eyebrow="In-memory vector search · build & measure" title={<>Pushing a CPU<br />to its QPS ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
 
-It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-one numbered experiments later, this is the engine that came out best and the lessons that got there. The full lab notebook is at [/experiments](/experiments).
+It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-one numbered experiments later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/experiments](/experiments).
 </PageHeader>
 
 All numbers below are **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box**:

@@ -2,7 +2,7 @@ import type { MDXComponents } from "mdx/types";
 import Link from "next/link";
 import { Card, Stat } from "@/components/shell";
 
-// Editorial prose styling for every .mdx page, plus globally-available lab components.
+// Editorial prose styling for every .mdx page, plus globally-available experiment figures.
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
     p: (props) => <p className="my-4 text-[17px] leading-8 text-body" {...props} />,

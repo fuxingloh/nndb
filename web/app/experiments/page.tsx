@@ -4,7 +4,7 @@ import { listExperiments } from "@/lib/experiments";
 
 export const metadata = {
   title: "Experiments · A 1-bit vector search engine",
-  description: "Every measured experiment, in order — the full lab notebook.",
+  description: "Every measured experiment, in order — the full experiment log.",
 };
 
 export default function ExperimentsIndex() {
@@ -15,7 +15,7 @@ export default function ExperimentsIndex() {
         <span className="text-cyan">←</span> the writeup
       </Link>
       <header className="mt-6 mb-10 border-b border-border pb-8">
-        <Eyebrow>Lab notebook · {items.length} entries</Eyebrow>
+        <Eyebrow>Experiment log · {items.length} entries</Eyebrow>
         <h1 className="mt-3 font-serif text-4xl font-medium italic text-text">Experiments</h1>
         <p className="mt-4 max-w-2xl text-[16px] leading-7 text-body">
           Every idea was a numbered, measured entry — wins and dead ends alike. The writeup

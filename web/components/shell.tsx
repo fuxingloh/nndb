@@ -28,7 +28,7 @@ export function PageHeader({
   );
 }
 
-// Numbered "lab" card — the interactive instrument, framed editorially.
+// Numbered experiment figure — the interactive instrument, framed editorially.
 export function Card({ n, title, children }: { n: string; title: string; children: ReactNode }) {
   return (
     <figure className="my-8 overflow-hidden rounded-xl border border-border bg-panel">
