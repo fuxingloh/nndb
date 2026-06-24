@@ -10,6 +10,7 @@ import { FunnelDiagram } from "@/components/labs/funnel-diagram";
 import { ResidualLab } from "@/components/labs/residual-lab";
 import { KernelLab } from "@/components/labs/kernel-lab";
 import { FrontierLab } from "@/components/labs/frontier-lab";
+import { ExactLab } from "@/components/labs/exact-lab";
 import { ServingLab } from "@/components/labs/serving-lab";
 
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
@@ -84,18 +85,33 @@ Funnel + rotation + residual + tiling gives a clean frontier. Against Product Qu
   <FrontierLab />
 </Card>
 
+## The exact corner: layout + adaptive pruning
+
+The funnel trades a little recall for huge speed. But sometimes you need *exact* (recall ~1.0) and the lossy codes are off the table — you have to scan full f32. Even there the same two levers apply, and they bought **4×**. First, **PDX**: store vectors column-major (all dimension-0s together, then all dimension-1s…) instead of row-major. Same data, but the scan now autovectorizes cleanly — a free 2×. Then **ADSampling**: walk a vector's dimensions in rotated order and *stop early* the moment its partial distance can't beat the current k-th best — most vectors get rejected after a fraction of their dimensions. Together: 9 → 37 QPS at 0.999 recall. The funnel is still far faster when you can spend recall; this is the corner where you can't. ([031](/experiments/031-adsampling), [032](/experiments/032-pdx-layout), [033](/experiments/033-pdx-adsampling))
+
+<Card n="07" title="exact scan — layout + pruning (recall ~1.0)">
+  <ExactLab />
+</Card>
+
 ## Serving without a cliff
 
 A naive one-query-at-a-time server cliffs from ms to *seconds* the moment load exceeds capacity. The **carousel** has queries ride one shared, continuously-cycling scan — every byte read is shared by everyone aboard. Latency stays bounded: ~5 ms light, ~35 ms at the ~940 QPS ceiling, no cliff. ([039–041](/experiments/041-carousel-fanout-frontier))
 
-<Card n="07" title="latency vs load — naive cliffs, carousel holds">
+<Card n="08" title="latency vs load — naive cliffs, carousel holds">
   <ServingLab />
 </Card>
 
-## Things I tried but don't use
+## Things I tried — parked or negative
 
-- **Disk-resident vectors** — I measured the economics (codes in RAM, vectors on SSD = 32× less RAM). But warm disk just becomes page-cache-bound, i.e. back to CPU/bandwidth, and right now I'm optimizing for **maximum QPS without a cost constraint** — so the engine stays fully in RAM. Parked, not used. ([045](/experiments/045-disk-resident-economics), [052](/experiments/052-carousel-disk-stack))
-- **Scalar PQ / OPQ** (footprint, not speed), **HNSW inside a cell** (loses to a flat 1-bit scan at high-D), **fewer scan bits** (recall collapses for ~8% QPS), **bf16/int8 rerank, register-tiling, prefetch** (neutral-to-negative). All in [/experiments](/experiments).
+The honest other half of the log. Some of these *work* and are simply off-mission; some are dead ends worth knowing about so you don't repeat them.
+
+- **Disk-resident vectors** — measured the economics (codes in RAM, vectors on SSD = 32× less RAM). But warm disk just becomes page-cache-bound, i.e. back to CPU/bandwidth, and the brief here is **max QPS without a cost constraint** — so the engine stays fully in RAM. Works, parked. ([045](/experiments/045-disk-resident-economics))
+- **PQ-prune, a 3-tier funnel** — binary → a product-quantization rerank → exact, cutting reads ~8× (1000 → 128 candidates) at 0.989 recall. A real win, but it only pays off in the disk regime above, so it's parked with it. ([060](/experiments/060-pq-prune-funnel))
+- **Query-adaptive funnel width** — set each query's shortlist from its own Hamming-gap "certificate" instead of a fixed 500. Cuts mean rerank work ~34% at matched recall — but in RAM the scan dominates, so it barely moves QPS; it's a latency lever for the disk regime. ([048](/experiments/048-query-adaptive-funnel))
+- **RaBitQ unbiased estimator** — the best recall-*per-bit* of anything tried (0.61 vs 0.46). But its scan is 40× slower: the estimator isn't a single SIMD instruction. Lever two, in one data point. ([028](/experiments/028-rabitq-estimator))
+- **ITQ learned rotation** — learning the rotation (vs a random one) adds ~1.5 recall points, but the residual already buys +3–9 for free, and a dense learned rotation costs more to apply. Not worth it here. ([055](/experiments/055-itq-learned-rotation))
+- **Truncated (prefix) scan** — scan only the first 768 of 1024 bits for +23% QPS at 0.987 recall; a rotation is what makes the prefix viable (+4.6 pts). A usable low-recall knob, distinct from the bit-*floor* below which collapsed. ([014](/experiments/014-prefix-scan), [027](/experiments/027-rotation-rescues-prefix))
+- **Dead ends:** scalar PQ / OPQ (footprint, not speed — gather-bound), **HNSW inside a cell** (loses to a flat 1-bit scan at high-D), **bit-floor** (4× fewer scan bits bought only +8% QPS while recall fell 0.995 → 0.72), **bf16/int8 rerank, register-tiling, prefetch** (neutral-to-negative). All in [/experiments](/experiments).
 
 ## The model, and scale
 
