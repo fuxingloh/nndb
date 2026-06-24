@@ -1,0 +1,98 @@
+{
+  "date": "2026-06-24T14:15:39Z",
+  "commit": "5a135ba",
+  "label": "accelerators evaluated, CPU chosen",
+  "basis": "us-east-1 on-demand, annualized ($/hr x 8760)",
+  "baseline": "c8a.2xlarge 2310 QPS @ 0.995 recall, $3,776/yr (history 062)",
+  "decision": "stay on CPU; GPU dense-batched-exact path parked in questions/accelerator-gemm.md ($/QPS at fixed recall)",
+  "instances": [
+    {
+      "instance": "c8a.2xlarge",
+      "class": "CPU",
+      "usd_hr": 0.431,
+      "usd_yr": 3776,
+      "fit": "native",
+      "verdict": "baseline / champion"
+    },
+    {
+      "instance": "g6.xlarge",
+      "class": "GPU L4",
+      "usd_hr": 0.805,
+      "usd_yr": 7050,
+      "fit": "dense GEMM (different engine)",
+      "verdict": "only wins batched+exact"
+    },
+    {
+      "instance": "g5.xlarge",
+      "class": "GPU A10G",
+      "usd_hr": 1.006,
+      "usd_yr": 8813,
+      "fit": "dense GEMM",
+      "verdict": "only wins batched+exact"
+    },
+    {
+      "instance": "g6e.xlarge",
+      "class": "GPU L40S",
+      "usd_hr": 1.861,
+      "usd_yr": 16302,
+      "fit": "dense GEMM",
+      "verdict": "only wins batched+exact"
+    },
+    {
+      "instance": "p4d.24xlarge",
+      "class": "GPU 8xA100",
+      "usd_hr": 21.958,
+      "usd_yr": 192349,
+      "fit": "dense GEMM",
+      "verdict": "absurd at this scale"
+    },
+    {
+      "instance": "p5.48xlarge",
+      "class": "GPU 8xH100",
+      "usd_hr": 55.04,
+      "usd_yr": 482150,
+      "fit": "dense GEMM",
+      "verdict": "absurd at this scale"
+    },
+    {
+      "instance": "inf2.xlarge",
+      "class": "Inferentia",
+      "usd_hr": 0.758,
+      "usd_yr": 6642,
+      "fit": "matmul ASIC (anti-funnel, int8 8x bytes)",
+      "verdict": "poor fit, skip"
+    },
+    {
+      "instance": "trn1.2xlarge",
+      "class": "Trainium",
+      "usd_hr": 1.344,
+      "usd_yr": 11771,
+      "fit": "training ASIC",
+      "verdict": "poor fit, skip"
+    },
+    {
+      "instance": "trn1.32xlarge",
+      "class": "Trainium",
+      "usd_hr": 21.5,
+      "usd_yr": 188340,
+      "fit": "training ASIC",
+      "verdict": "poor fit, skip"
+    },
+    {
+      "instance": "f1.2xlarge",
+      "class": "FPGA",
+      "usd_hr": 1.65,
+      "usd_yr": 14454,
+      "fit": "native bit popcount, bandwidth-bound",
+      "verdict": "best fit, worst ROI"
+    },
+    {
+      "instance": "f2.6xlarge",
+      "class": "FPGA",
+      "usd_hr": 1.98,
+      "usd_yr": 17345,
+      "fit": "native bit popcount, bandwidth-bound",
+      "verdict": "best fit, worst ROI"
+    }
+  ]
+}

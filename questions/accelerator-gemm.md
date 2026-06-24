@@ -55,6 +55,44 @@ project** (which exists because doing all the work was expensive on a CPU).
 3. Whether any available ASIC has native sub-int8 (1-bit/4-bit) matmul, which would let
    the *binary* code ride the tensor engine without the 8× byte penalty.
 
+## How to set it up (if un-parked)
+
+The honest experiment is an afternoon for the baseline, a day or two for the fair fight.
+The setup, in order:
+
+1. **Integration point is the ANN-Benchmarks contract, not the Rust `knn_batch` trait.**
+   A GPU run is a *separate harness* (Python is fine) that reads the same SIFT1M `fvecs`
+   base/query + ground-truth `ivecs` and reports recall@k / QPS / latency the same way.
+   Nothing in `database/` changes — it's a sibling experiment, like any `history/` entry.
+
+2. **FAISS-GPU for the dense exact baseline** — `IndexFlatL2` → `index_cpu_to_gpu`. Turnkey,
+   and it solves on-device top-K (WarpSelect). Raw PyTorch (`Q @ B.T` + `torch.topk`) is the
+   ~10-line fallback to see the GEMM directly.
+
+3. **Instance — pick on memory bandwidth, not generation.** The scan is bandwidth-bound, so
+   the older card can win:
+
+   | | GPU | Mem BW | Note |
+   |---|---|---|---|
+   | g5.2xlarge | A10G (Ampere) | ~600 GB/s | default first data point |
+   | g6.2xlarge | L4 (Ada, 72 W) | ~300 GB/s | better $/QPS & INT8, bandwidth-starved |
+   | g6e.2xlarge | L40S (Ada) | ~864 GB/s, 48 GB | where the GPU actually wins throughput |
+
+   (`g7` unconfirmed as of 2026-06 — verify it exists before assuming.) Pull **live spot +
+   on-demand prices** before deciding; $/QPS is the metric, and it moves with spot capacity.
+
+4. **Infra change is one file.** Extend `infra/lib/spot-stack.ts` to take a `g`-family
+   `instanceType` and swap the AMI from Amazon Linux 2023 to a **Deep Learning AMI** (CUDA +
+   drivers preinstalled — hand-installing CUDA is the only annoying part). Spot/SSH/teardown
+   plumbing carries over unchanged.
+
+5. **Bake in the honesty caveats** (see the table above — the GPU runs a different engine):
+   report **$/QPS at fixed recall**, not raw QPS, and sweep **batch size** (single query =
+   GEMV at <5% utilization; the GPU only wins batched). Note both or the comparison misleads.
+
+Done = FAISS-GPU exact on SIFT1M on a g-family spot box, recall/QPS/latency across a batch
+sweep, $/QPS vs the CPU funnel at fixed recall, recorded as the next `history/NNN-*` pair.
+
 ## Related
 
 - `resources/005-simd-adc-scann.md` — the CPU analogue (pshufb LUT) of "gather can be fast

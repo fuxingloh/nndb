@@ -17,7 +17,7 @@ import { HardwareLab } from "@/components/labs/hardware-lab";
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
 
-It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-one numbered experiments later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/experiments](/experiments).
+It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-plus numbered experiments later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/experiments](/experiments).
 </PageHeader>
 
 All numbers below are **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box**:
@@ -141,4 +141,4 @@ That gives a clean buying rule. Throughput `≈ C·P/N` (per-core rate × physic
 
 A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
 
-→ Browse the full trail: [**all 62 experiments**](/experiments)
+→ Browse the full trail: [**all 63 experiments**](/experiments)
