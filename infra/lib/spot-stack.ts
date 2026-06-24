@@ -16,6 +16,9 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 interface SpotStackProps extends cdk.StackProps {
   /** Per-stack instance type (used by the sweep, where context is shared across stacks). */
   instanceTypeOverride?: string;
+  /** Public-subnet index to launch in (0/1/2 → AZ a/b/c). Lets us dodge per-AZ
+   *  spot-capacity holes (e.g. c8g had none in -1a). Default 0. */
+  azIndex?: number;
 }
 
 export class SpotStack extends cdk.Stack {
@@ -90,12 +93,15 @@ export class SpotStack extends cdk.Stack {
       },
     });
 
+    const azIndex = props?.azIndex ?? Number(c.tryGetContext('azIndex') ?? 0);
+    const subnet = vpc.publicSubnets[azIndex % vpc.publicSubnets.length];
+
     const instance = new ec2.CfnInstance(this, 'Spot', {
       launchTemplate: {
         launchTemplateId: lt.launchTemplateId!,
         version: lt.latestVersionNumber,
       },
-      subnetId: vpc.publicSubnets[0].subnetId,
+      subnetId: subnet.subnetId,
       securityGroupIds: [sg.securityGroupId],
       tags: [{ key: 'Name', value: 'vps-spot-bench' }],
     });

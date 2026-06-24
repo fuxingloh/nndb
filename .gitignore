@@ -13,3 +13,6 @@
 # Misc
 .DS_Store
 .idea/
+
+# hardware sweep raw per-box logs (history/062*.json is canonical)
+history/hw/

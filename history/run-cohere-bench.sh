@@ -16,21 +16,29 @@ set -euo pipefail
 LABEL="${1:-$(uname -m)}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "################ CPU IDENTITY [$LABEL] ################"
-if command -v lscpu >/dev/null; then
-  lscpu | grep -E "Architecture|Model name|^CPU\(s\)|Thread|Core|BogoMIPS|Flags" | head -20 || true
+OS="$(uname -s)"
+echo "################ CPU IDENTITY [$LABEL] ($OS) ################"
+if [ "$OS" = "Darwin" ]; then
+  sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+  echo "cores: $(sysctl -n hw.physicalcpu) phys / $(sysctl -n hw.logicalcpu) logical"
+  echo "mem:   $(( $(sysctl -n hw.memsize) / 1024 / 1024 )) MB"
+  echo "vector ISA: NEON (Apple Silicon)"
+else
+  command -v lscpu >/dev/null && lscpu | grep -E "Architecture|Model name|^CPU\(s\)|Thread|Core|BogoMIPS|Flags" | head -20 || true
+  echo -n "vector ISA: "
+  grep -o -m1 -E 'avx512[a-z_]*|asimd|neon' /proc/cpuinfo 2>/dev/null | tr '\n' ' ' || echo "(unknown)"
+  echo; echo "mem: $(grep MemTotal /proc/meminfo 2>/dev/null || true)"
 fi
-echo -n "vector ISA: "
-grep -o -m1 -E 'avx512[a-z_]*|asimd|neon' /proc/cpuinfo 2>/dev/null | tr '\n' ' ' || echo "(unknown)"
-echo; echo "mem: $(grep MemTotal /proc/meminfo 2>/dev/null || true)"
 
 echo "################ TOOLCHAIN ################"
 if ! command -v cargo >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 fi
 . "$HOME/.cargo/env"
+# C toolchain: macOS ships clang via Xcode CLT; Linux installs gcc.
 if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1; then
-  sudo dnf -y install gcc || (sudo apt-get update && sudo apt-get install -y build-essential)
+  if [ "$OS" = "Darwin" ]; then xcode-select --install 2>/dev/null || true
+  else sudo dnf -y install gcc || (sudo apt-get update && sudo apt-get install -y build-essential); fi
 fi
 # uv for the deterministic dataset fetch (avoids system-python wheel gaps).
 if ! command -v uv >/dev/null 2>&1; then
@@ -51,7 +59,8 @@ if [ ! -f "$DATA/cohere_base.fvecs" ]; then
 fi
 
 echo "################ BUILD (target-cpu=native) ################"
-cargo build --release -q
+# Only the benchmark bin — other bins (pq4simd/funnel3) need nightly portable_simd.
+cargo build --release --bin vsearch -q
 
 if [ ! -f "$DATA/cohere_groundtruth.ivecs" ]; then
   echo "writing exact ground truth (deterministic) ..."
@@ -66,12 +75,10 @@ run() {
     --queries 2000 --latency-queries 200 --k 10 --reps 3 --json "$@"
 }
 
-# (1) exact brute force — the memory-bandwidth-bound path.
-EXACT="$(run --quant f32 --batch 16 --label "${LABEL} exact")"
-# (2) the shipped engine — 1-bit funnel, rotation+residual, tile=8, exact rerank.
-#     C=500 is the balanced operating point (~0.995 recall in 061).
+# The shipped engine — 1-bit funnel, rotation+residual, tile=8, exact rerank.
+# C=500 is the balanced operating point (~0.995 recall in 061). The exact f32 path
+# is not measured here — only the funnel matters for the hardware comparison.
 FUNNEL="$(run --quant binary --rotate 2 --residual --batch 8 --rerank 500 --label "${LABEL} funnel")"
 
-echo "EXACT_JSON=${EXACT}"
 echo "FUNNEL_JSON=${FUNNEL}"
 echo "################ DONE [$LABEL] ################"

@@ -12,6 +12,7 @@ import { KernelLab } from "@/components/labs/kernel-lab";
 import { FrontierLab } from "@/components/labs/frontier-lab";
 import { ExactLab } from "@/components/labs/exact-lab";
 import { ServingLab } from "@/components/labs/serving-lab";
+import { HardwareLab } from "@/components/labs/hardware-lab";
 
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
@@ -121,12 +122,23 @@ After enough data the engine is predictable: throughput ≈ `1.1e9 · cores / N`
 
 "Popcount always beats gather" held — until I wrote the *SIMD* version of PQ's lookup: 4-bit codes, an in-register `pshufb` table (safe portable-SIMD Rust), 16 lookups per instruction. At 8 bytes/vector it stays in cache and runs **2–9× faster than an untiled popcount scan** (the green bar above). Gather isn't dead — it had to be vectorized *and* tiny. Whether it beats the *tiled* funnel end-to-end is the next thing I'd chase. ([059](/experiments/059-simd-adc-pq4))
 
-## A note on the hardware
+## The hardware: what to actually buy
 
-This needs AVX-512 (`VPOPCNTDQ`, `pshufb`). I prototyped on Lightsail, then moved to an EC2 c8i (Granite Rapids — closer to metal, real AVX-512) but kept the instance modest to not burn money. Everything here is one 8-core box; scaling past ~940 QPS is "add cores/shards," which the model predicts.
+The same engine, same data, same flags across **seven boxes** — three vendors × two families plus an Apple-Silicon ringer, all the *advised 8-vCPU* instance. Recall stays a flat 0.9952, so the only variables are silicon and price. The winner is decisive: **AMD Zen5 does ~2310 QPS — 2.5× the Intel box the engine was tuned on** ([062](/experiments/062-hardware-cost-rightsizing)).
+
+<Card n="09" title="perf per dollar across 7 boxes (recall held constant)">
+  <HardwareLab />
+</Card>
+
+The funnel is compute-bound on popcount, so throughput is two multiplicative levers — **physical cores × popcount width** — and the "8 vCPU" label hides both:
+
+- **vCPUs aren't cores.** At the 8-vCPU tier AMD/Graviton give 8 *physical* cores; Intel gives 4 + hyperthreading. A scaling sweep settles it: QPS is dead-linear to 4 threads (211→413→850) then the SMT 2nd thread *regresses* (808). So an AMD vCPU does **289 QPS**, an Intel vCPU **117** — half, for the same line item.
+- **Popcount width is the other lever.** Graviton4 has 8 cores too but ~half the QPS — NEON `CNT` is 128-bit vs AVX-512 `VPOPCNTDQ`'s 512-bit. (Apple M1 is the for-the-LOLs floor.)
+
+That gives a clean buying rule. Throughput `≈ C·P/N` (per-core rate × physical cores ÷ vectors scanned), so **`QPS/$ ≈ C·P / (N·price)` → buy the densest AVX-512 *physical* cores per dollar.** And since the hot scan is only **128 MB** (the f32 rerank store is ~4 GB, still tiny), you want *minimal* RAM — compute-optimized, not memory. The 12–28 GB of slack on each box is the IVF lever: **RAM holds all the cells, cores scan only the few a query touches** — so size RAM for the corpus and cores for the QPS, independently.
 
 ## The best, in one line
 
-A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall at ~960 QPS and 8 ms** on one 8-core box, in 128 MB. The deepest lesson: on a CPU, the representation that wins is the one whose per-vector operation is a single SIMD instruction.
+A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
 
-→ Browse the full trail: [**all 61 experiments**](/experiments)
+→ Browse the full trail: [**all 62 experiments**](/experiments)
