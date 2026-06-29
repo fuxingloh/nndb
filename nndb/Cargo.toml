@@ -1,0 +1,37 @@
+[package]
+name = "nndb"
+version = "0.1.0"
+edition = "2021"
+description = "In-memory vector search: exact brute-force baseline + ANN-Benchmarks-style eval harness"
+
+[[bin]]
+name = "vsearch"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rayon = "1"
+libc = "0.2"
+
+# HNSW-in-cell comparison (src/bin/crossover.rs only): a real, parallel HNSW so
+# the funnel-vs-graph bake-off is a fair fight, not a strawman.
+hnsw_rs = "0.3"
+
+# Disk-resident vectors economics study (src/bin/disk.rs only): mmap the f32 store.
+memmap2 = "0.9"
+
+# SVD for learned rotations — ITQ (src/bin/itq.rs) and OPQ (src/bin/pq.rs --opq).
+nalgebra = "0.33"
+
+# Serving layer (server + load generator bins)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+# Brute-force KNN is FLOP-bound; these settings matter a lot for the baseline numbers.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -1,0 +1,168 @@
+---
+title: Pushing vector search QPS & latency to the ceiling
+description: How far one CPU box can go on in-memory top-k vector search — from a brute-force baseline to a 1-bit funnel served by a carousel, measured every step.
+---
+
+import { PageHeader, Stat } from "@/components/shell";
+import { JourneyLab } from "@/components/labs/journey-lab";
+import { BytesLab } from "@/components/labs/bytes-lab";
+import { FunnelDiagram } from "@/components/labs/funnel-diagram";
+import { ResidualLab } from "@/components/labs/residual-lab";
+import { KernelLab } from "@/components/labs/kernel-lab";
+import { FrontierLab } from "@/components/labs/frontier-lab";
+import { ExactLab } from "@/components/labs/exact-lab";
+import { ServingLab } from "@/components/labs/serving-lab";
+import { HardwareLab } from "@/components/labs/hardware-lab";
+import { ScalingLab } from "@/components/labs/scaling-lab";
+
+<PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
+A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
+
+It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. Sixty-plus numbered experiments later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/notes](/notes).
+</PageHeader>
+
+All numbers below are **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box**:
+
+<div className="my-6 grid grid-cols-3 gap-3">
+  <Stat value="0.995" label="recall@10" />
+  <Stat value="~960" label="QPS" />
+  <Stat value="8 ms" label="p50 latency" />
+</div>
+
+~100× the throughput of the brute-force baseline, same recall, 128 MB of index:
+
+<Card n="01" title="how we got here — QPS at held recall">
+  <JourneyLab />
+</Card>
+
+> **Scope — one IVF cell.** This is the *within-cell* engine. A real index is IVF: k-means splits the corpus into thousands of clusters, each with a centroid, and a coarse router sends a query to just a few of them. Everything here is making the scan *inside one cluster* as fast as possible — the router that picks clusters is a layer above (out of scope). That assumption matters most for the residual below: each cluster has its own centroid to subtract.
+
+## The wall is memory, not compute
+
+Brute force — distance to all 1M vectors per query — does ~9 QPS. The instinct is to speed up the kernel (FMA, AVX-512, batching); I did, and it roughly doubled, then stopped. The bottleneck was never compute. It's **memory bandwidth**: a query scans the whole base, and at 4 KB/vector that's 4 GB moved from RAM every time. You can't out-compute the bus.
+
+That reframes everything into two levers: **send fewer bytes**, or **spend fewer/cheaper instructions** on each byte. The rest of the project is those two. ([003–008](/notes/004-cascadelake-avx512))
+
+<Card n="02" title="lever one — fewer bytes per query">
+  <BytesLab />
+</Card>
+
+## The funnel
+
+Fewest bytes: keep one **sign bit per dimension** — 32× smaller. Compare two of these codes with Hamming distance (XOR, count differing bits). It's coarse, so use it as a **funnel**: scan all N with the 1-bit code for a few-hundred shortlist, then re-rank only those with the real vectors. Recall ~0.99, QPS 9 → ~500 — the biggest single step. ([009](/notes/009-binary-rerank))
+
+<Card n="03" title="the funnel — coarse filters, exact ranks">
+  <FunnelDiagram />
+</Card>
+
+## Lever two: the instruction matters more than the math
+
+Counting set bits is `VPOPCNTDQ` — one SIMD instruction over eight 64-bit words. A "smarter" scheme with better recall-per-bit (asymmetric scoring via a lookup table) *lost* — because a table lookup is a **gather** the CPU can't vectorize, while popcount stays one instruction. The chart makes it concrete: the same job, three different per-vector instructions, and throughput tracks the *instruction*, not the math. **The representation that wins is the one whose op is a single SIMD instruction** — the law that decided nearly every later call. ([010–012](/notes/011-asym-lut))
+
+<Card n="04" title="same job, different instruction (scan throughput)">
+  <KernelLab />
+</Card>
+
+## Making the bits count
+
+One bit/dim is brutal, so don't waste bits. A **random rotation** spreads information evenly across dimensions (free recall). The bigger lever is the **residual**, and it's exactly where the IVF assumption pays off: inside a cluster the vectors hug the cell's centroid, so their raw sign bits just re-encode that shared center — useless for telling them apart. IVF already gives every one of its thousands of cells a k-means centroid; subtract the cell's own centroid and the bits encode each vector's *deviation* instead. **+3–9 recall points**, free. Toggle it: ([026](/notes/026-rabitq-rotation), [046](/notes/046-cell-size-residual))
+
+<Card n="05" title="residual — subtract the cell's center">
+  <ResidualLab />
+</Card>
+
+## Recall is a dial, not a constant
+
+Every experiment trades recall against speed and bytes, so I track recall at each operating point rather than chasing one number. The funnel's recall is set by how wide the shortlist is and how good the codes are — rotation and residual buy recall for free; widening the shortlist buys it for QPS. ([051](/notes/051-stacked-engine))
+
+## Throughput: tiling
+
+The scan is bandwidth-bound, so reuse each loaded code: compare it against a **tile** of queries while it's hot in cache, before moving on. More comparisons per byte read; the base streams once per tile instead of per query. The tile has to fit in cache (L1/L2), which bounds how big it can get — tile≈8 was the sweet spot here. **+73% QPS**, identical results. ([016](/notes/016-tiled-binary-scan), [038](/notes/038-tile-retune))
+
+## The frontier: recall vs QPS
+
+Funnel + rotation + residual + tiling gives a clean frontier. Against Product Quantization (the textbook quantizer, *fewer* bytes), the funnel wins ~7× on QPS at equal recall — lever two again (PQ's op is a gather). ([051](/notes/051-stacked-engine), [054](/notes/054-product-quantization))
+
+<Card n="06" title="recall vs QPS — funnel vs PQ">
+  <FrontierLab />
+</Card>
+
+## The exact corner: layout + adaptive pruning
+
+The funnel trades a little recall for huge speed. But sometimes you need *exact* (recall ~1.0) and the lossy codes are off the table — you have to scan full f32. Even there the same two levers apply, and they bought **4×**. First, **PDX**: store vectors column-major (all dimension-0s together, then all dimension-1s…) instead of row-major. Same data, but the scan now autovectorizes cleanly — a free 2×. Then **ADSampling**: walk a vector's dimensions in rotated order and *stop early* the moment its partial distance can't beat the current k-th best — most vectors get rejected after a fraction of their dimensions. Together: 9 → 37 QPS at 0.999 recall. The funnel is still far faster when you can spend recall; this is the corner where you can't. ([031](/notes/031-adsampling), [032](/notes/032-pdx-layout), [033](/notes/033-pdx-adsampling))
+
+<Card n="07" title="exact scan — layout + pruning (recall ~1.0)">
+  <ExactLab />
+</Card>
+
+## Serving without a cliff
+
+A naive one-query-at-a-time server cliffs from ms to *seconds* the moment load exceeds capacity. The **carousel** has queries ride one shared, continuously-cycling scan — every byte read is shared by everyone aboard. Latency stays bounded: ~5 ms light, ~35 ms at the ~940 QPS ceiling, no cliff. ([039–041](/notes/041-carousel-fanout-frontier))
+
+<Card n="08" title="latency vs load — naive cliffs, carousel holds">
+  <ServingLab />
+</Card>
+
+## Things I tried — parked or negative
+
+The honest other half of the log. Some of these *work* and are simply off-mission; some are dead ends worth knowing about so you don't repeat them.
+
+- **Disk-resident vectors** — measured the economics (codes in RAM, vectors on SSD = 32× less RAM). But warm disk just becomes page-cache-bound, i.e. back to CPU/bandwidth, and the brief here is **max QPS without a cost constraint** — so the engine stays fully in RAM. Works, parked. ([045](/notes/045-disk-resident-economics))
+- **PQ-prune, a 3-tier funnel** — binary → a product-quantization rerank → exact, cutting reads ~8× (1000 → 128 candidates) at 0.989 recall. A real win, but it only pays off in the disk regime above, so it's parked with it. ([060](/notes/060-pq-prune-funnel))
+- **Query-adaptive funnel width** — set each query's shortlist from its own Hamming-gap "certificate" instead of a fixed 500. Cuts mean rerank work ~34% at matched recall — but in RAM the scan dominates, so it barely moves QPS; it's a latency lever for the disk regime. ([048](/notes/048-query-adaptive-funnel))
+- **RaBitQ unbiased estimator** — the best recall-*per-bit* of anything tried (0.61 vs 0.46). But its scan is 40× slower: the estimator isn't a single SIMD instruction. Lever two, in one data point. ([028](/notes/028-rabitq-estimator))
+- **ITQ learned rotation** — learning the rotation (vs a random one) adds ~1.5 recall points, but the residual already buys +3–9 for free, and a dense learned rotation costs more to apply. Not worth it here. ([055](/notes/055-itq-learned-rotation))
+- **Truncated (prefix) scan** — scan only the first 768 of 1024 bits for +23% QPS at 0.987 recall; a rotation is what makes the prefix viable (+4.6 pts). A usable low-recall knob, distinct from the bit-*floor* below which collapsed. ([014](/notes/014-prefix-scan), [027](/notes/027-rotation-rescues-prefix))
+- **Dead ends:** scalar PQ / OPQ (footprint, not speed — gather-bound), **HNSW inside a cell** (loses to a flat 1-bit scan at high-D), **bit-floor** (4× fewer scan bits bought only +8% QPS while recall fell 0.995 → 0.72), **bf16/int8 rerank, register-tiling, prefetch** (neutral-to-negative). All in [/notes](/notes).
+
+## The model, and scale
+
+After enough data the engine is predictable: throughput ≈ `1.1e9 · cores / N`, recall a power law in N, shortlist, and bits — separable axes, accurate to ~1 recall point. And it scales: pushed to 100M codes, scan throughput stays flat across the cache→DRAM transition — *compactness is the scaling property*. ([047](/notes/047-scale-hierarchy-cliff), [049](/notes/049-roofline-model))
+
+## The surprise
+
+"Popcount always beats gather" held — until I wrote the *SIMD* version of PQ's lookup: 4-bit codes, an in-register `pshufb` table (safe portable-SIMD Rust), 16 lookups per instruction. At 8 bytes/vector it stays in cache and runs **2–9× faster than an untiled popcount scan** (the green bar above). Gather isn't dead — it had to be vectorized *and* tiny. Whether it beats the *tiled* funnel end-to-end is the next thing I'd chase. ([059](/notes/059-simd-adc-pq4))
+
+## The hardware: what to actually buy
+
+The same engine, same data, same flags across **seven boxes** — three vendors × two families plus an Apple-Silicon ringer, all the *advised 8-vCPU* instance. Recall stays a flat 0.9952, so the only variables are silicon and price. The winner is decisive: **AMD Zen5 does ~2310 QPS — 2.5× the Intel box the engine was tuned on** ([062](/notes/062-hardware-cost-rightsizing)).
+
+<Card n="09" title="perf per dollar across 7 boxes (recall held constant)">
+  <HardwareLab />
+</Card>
+
+The funnel is compute-bound on popcount, so throughput is two multiplicative levers — **physical cores × popcount width** — and the "8 vCPU" label hides both:
+
+- **vCPUs aren't cores.** At the 8-vCPU tier AMD/Graviton give 8 *physical* cores; Intel gives 4 + hyperthreading. A scaling sweep settles it: QPS is dead-linear to 4 threads (211→413→850) then the SMT 2nd thread *regresses* (808). So an AMD vCPU does **289 QPS**, an Intel vCPU **117** — half, for the same line item.
+- **Popcount width is the other lever.** Graviton4 has 8 cores too but ~half the QPS — NEON `CNT` is 128-bit vs AVX-512 `VPOPCNTDQ`'s 512-bit. (Apple M1 is the for-the-LOLs floor.)
+
+That gives a clean buying rule. Throughput `≈ C·P/N` (per-core rate × physical cores ÷ vectors scanned), so **`QPS/$ ≈ C·P / (N·price)` → buy the densest AVX-512 *physical* cores per dollar.** And since the hot scan is only **128 MB** (the f32 rerank store is ~4 GB, still tiny), you want *minimal* RAM — compute-optimized, not memory. The 12–28 GB of slack on each box is the IVF lever: **RAM holds all the cells, cores scan only the few a query touches** — so size RAM for the corpus and cores for the QPS, independently.
+
+## How far one box scales — the bandwidth wall
+
+Take the winner (AMD Zen5) and push *one* family across its whole range, 8 → 192 cores, same engine and recall (0.9952). The funnel is compute-bound only at the small end (~289 QPS/core); then DDR5-6400 saturates and cores stop converting into throughput ([064](/notes/064-c8a-scaling-bandwidth-roofline)).
+
+<Card n="10" title="c8a scaling — QPS vs cores, until DDR5 saturates">
+  <ScalingLab />
+</Card>
+
+It's a **two-tier wall**. A sub-full-socket box shares the socket's 12 memory channels with co-tenants and pins at **~13.6k QPS** (64c and 96c land at the same number — more cores, no more throughput, ~245 GB/s). Only the **full-socket 48xlarge** gets all the channels and breaks out to **19,881 QPS** (~358 GB/s, 58% of the 614 GB/s peak) — and even that is sublinear (2× cores → 1.47× QPS). The reason is simple: at scale every query streams the whole 128 MB of codes, so once the bus is full, that's the ceiling — `achievable_BW ÷ 18 MB/query`. Past the knee it's the memory bus, not the cores. (Which is also why small instances win perf-per-buck — scale *out*, not up.)
+
+## The best, in one line
+
+A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
+
+## What's next — from one node to a cluster
+
+Everything here is *one node*. But that's the point: once a single node is fully characterized — QPS, p50/p99, recall, the bandwidth ceiling, $/QPS — you can **design the whole embedding-search cluster on paper**, because the cluster is just these numbers tiled out. The directions below are deliberately a size up — full-infra, cluster-scale experiments that are too big for this study, but already on the map for when it grows into one.
+
+- **Full IVF, not one cell.** This entire study lives *inside* a single IVF cell; a real index is thousands of them under a coarse router. The open questions move up a layer: how cell count and `nprobe` trade recall against the fraction of the corpus actually scanned, how to keep cell sizes balanced, and how the router itself is served.
+- **Elastic placement (k8s).** Treat the fleet as bin-packing: saturate each node's cores, then fill its *spare* RAM with resident centroids rather than letting it sit idle (064 showed the box is CPU-bound with RAM to spare). Any node with free memory should host more cells to lift aggregate QPS.
+- **Adaptive RAM ⇄ disk tiering.** Keep the 1-bit codes and hot centroids in RAM; let the cold f32 rerank store live on SSD and page back on demand (045 measured the economics). What's "hot" is decided against an explicit QPS / latency / recall budget.
+- **Latency-driven autoscaling.** Drive node count from p50/p99 SLOs and QPS head-room — and scale on how *full* a centroid is getting, not just raw load, so capacity is added *before* a cell thrashes, without churning RAM through constant insert / delete / rebalance.
+- **Adaptive recall.** Recall is a dial (shown per-node). At cluster scale, spend *idle* capacity on it: when QPS is below the ceiling, probe more cells for higher recall; tighten back under load. Recall that floats with utilization.
+- **Matryoshka codes.** Truncatable embeddings (027 hinted at it with prefix scans) to stream even fewer bytes per query — the most direct next attack on the bandwidth wall 064 just drew.
+
+None of these are built here — they're the cluster-scale chapter. But the single-node numbers in this writeup are exactly the inputs that make them designable rather than guessed.
+
+→ Browse the full trail: [**all 64 experiments**](/notes)

@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there, measured the ANN-Benchmarks way (recall/QPS/latency). `database/` is the Rust engine; `web/` is the writeup — a Next.js + MDX learning article (Lab + Prose, Ayu-dark) at `web/app/page.mdx`, which also **serves every `history/` entry as a readable note at `/experiments/<slug>`** (dynamic markdown route reading `history/` directly via `web/lib/experiments.ts`). `history/` stays the source of truth — the measure scripts write there and the site reads from there; don't move it.
+A greenfield experiment in **in-memory** top-K vector search: load all vectors into RAM (not disk-bound) and search there, measured the ANN-Benchmarks way (recall/QPS/latency). `nndb/` is the Rust engine (crate `nndb`); `website/` is the writeup — a Next.js + MDX learning article (Lab + Prose, Ayu-dark) at `website/app/page.mdx`, which also **serves every `notes/` entry as a readable page at `/notes/<slug>`** (dynamic markdown route reading `notes/` directly via `website/lib/notes.ts`). `notes/` stays the source of truth — the measure scripts write there and the site reads from there; don't move it.
 
-**Scope (important):** this engine models the efficient *exact* search **inside a single IVF cell/shard** — the coarse quantizer that routes a query to a cell lives at a layer above us. So the goal is making the within-cell full scan as fast as possible (SIMD, memory layout, cache). Approximate-index layers (IVF router, HNSW) and quantization were investigated and closed out as history entries (042–044, 054–056). Directions deliberately *not* built are parked under `questions/` (e.g. `accelerator-gemm.md` — search-as-GEMM on a GPU/ASIC), not implemented here.
+**Scope (important):** this engine models the efficient *exact* search **inside a single IVF cell/shard** — the coarse quantizer that routes a query to a cell lives at a layer above us. So the goal is making the within-cell full scan as fast as possible (SIMD, memory layout, cache). Approximate-index layers (IVF router, HNSW) and quantization were investigated and closed out as numbered entries (042–044, 054–056). Directions deliberately *not* built are parked as **♫ notes** in `notes/` (e.g. `note-accelerator-gemm.md` — search-as-GEMM on a GPU/ASIC), not implemented here.
 
 ## Commands
 
-All Rust work happens in `database/`:
+All Rust work happens in `nndb/`:
 
 ```bash
-cd database
+cd nndb
 bash scripts/download-sift.sh                    # fetch SIFT1M into data/sift/ (~168MB dl, 488MB RAM)
 cargo build --release                            # release build is mandatory for any real numbers
 cargo test --release                             # run unit tests
@@ -26,19 +26,19 @@ cargo run --release --bin server                 # start the HTTP search server
 cargo run --release --bin loadtest -- --concurrency 8 --requests 1000
 ```
 
-The dataset (`database/data/`) is gitignored — `download-sift.sh` must be run before anything.
+The dataset (`nndb/data/`) is gitignored — `download-sift.sh` must be run before anything.
 
-## History / measurement
+## Notes / measurement
 
-Each improvement is recorded as a numbered pair in `history/`: `NNN-<descriptive-title>.md` (narrative + conclusions) and `NNN-<descriptive-title>.json` (perf data) — e.g. `001-exact-brute-force-baseline.md`, `002-networked-serving.md`. The title should summarize the index/milestone, not say "what we did". Two generators, both stamp date + git commit:
-- `history/measure.sh <out.json> <label>` — in-process algorithm numbers (recall, QPS, latency, memory).
-- `history/measure-serving.sh <out.json> <label>` — starts the server and runs a concurrency sweep for user-facing latency.
+The `notes/` folder holds two kinds of entry, both served on the site at `/notes/<slug>`:
 
-When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale. New `history/*.md` entries appear on the site automatically (the `/experiments` route lists everything in `history/`); keep the first line a single `# NNN — Title` H1 so the slug/title render correctly.
+**Numbered experiments** — each improvement is a numbered pair in `notes/`: `NNN-<descriptive-title>.md` (narrative + conclusions) and `NNN-<descriptive-title>.json` (perf data) — e.g. `001-exact-brute-force-baseline.md`, `002-networked-serving.md`. The title should summarize the index/milestone, not say "what we did". Two generators, both stamp date + git commit:
+- `notes/measure.sh <out.json> <label>` — in-process algorithm numbers (recall, QPS, latency, memory).
+- `notes/measure-serving.sh <out.json> <label>` — starts the server and runs a concurrency sweep for user-facing latency.
 
-## Resources
+When you make an improvement, add the next numbered entry — don't overwrite old ones; the point is the trend. Entries are **retrospective only**: record what was done and what the numbers show. Do not add "Next"/roadmap sections — forward plans go stale. New `notes/*.md` entries appear on the site automatically (the `/notes` route lists everything in `notes/`); keep the first line a single `# NNN — Title` H1 so the slug/title render correctly.
 
-External references live in `resources/NNN-<slug>.md` (e.g. `001-ann-benchmarks.md`). **When you discover an external resource worth tracking, add a numbered note here and keep it current.** The bar: things that are *external, evolving, and trackable* — benchmark leaderboards, library docs, papers, OSS projects, tools, sites tracking compiler/SIMD optimizations, etc. **Not** universal/timeless concepts that any engineer knows (don't write a note explaining what SIMD or GEMM *is*) — only pointers to where the state of the art is published and changes over time.
+**♫ notes** — non-measured entries: `note-<slug>.md` with a `# ♫ Title` H1. Two uses: (a) **external references** worth tracking (benchmark leaderboards, library docs, papers, OSS projects, SIMD/compiler trackers) — things *external, evolving, and trackable*, NOT universal/timeless concepts (don't write a note explaining what SIMD or GEMM *is*); (b) **parked directions** deliberately not built (e.g. `note-accelerator-gemm.md`). The ♫ in the H1 is the marker the site uses to render them as notes (not experiments) and the cross-reference signal — keep it.
 
 ## Architecture
 

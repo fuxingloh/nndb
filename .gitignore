@@ -1,18 +1,18 @@
 # Rust
-/database/target/
+/nndb/target/
 **/*.rs.bk
 
 # Datasets (large; fetched via database/scripts/download-sift.sh)
-/database/data/
+/nndb/data/
 
 # Web
-/web/node_modules/
-/web/.next/
-/web/dist/
+/website/node_modules/
+/website/.next/
+/website/dist/
 
 # Misc
 .DS_Store
 .idea/
 
-# hardware sweep raw per-box logs (history/062*.json is canonical)
-history/hw/
+# hardware sweep raw per-box logs (notes/062*.json is canonical)
+notes/hw/
