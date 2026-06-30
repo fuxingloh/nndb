@@ -17,5 +17,15 @@
 # deepsec vulnerability scanner — local working dir, never committed
 /.deepsec/
 
+# Secrets / credentials — NEVER commit (AWS creds, tokens, keys)
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+**/credentials
+**/aws-credentials*
+
 # hardware sweep raw per-box logs (notes/062*.json is canonical)
 notes/hw/
