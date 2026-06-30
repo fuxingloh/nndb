@@ -23,7 +23,7 @@ roughly two orders of magnitude in throughput over an f32 brute-force scan while
 holding recall near the exact baseline. The live numbers, per machine, are in the
 writeup and the notes — not pinned here, because they keep moving.
 
-→ **Writeup:** <https://vector-search.fuxing.dev> · **Full trail:** [`/notes`](https://vector-search.fuxing.dev/notes)
+→ **Writeup:** <https://nndb.fuxing.dev> · **Full trail:** [`/notes`](https://nndb.fuxing.dev/notes)
 
 ## Layout
 
