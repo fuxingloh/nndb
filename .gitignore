@@ -2,7 +2,7 @@
 /nndb/target/
 **/*.rs.bk
 
-# Datasets (large; fetched via database/scripts/download-sift.sh)
+# Datasets (large; fetched via nndb/scripts/download-sift.sh)
 /nndb/data/
 
 # Web
@@ -13,6 +13,9 @@
 # Misc
 .DS_Store
 .idea/
+
+# deepsec vulnerability scanner — local working dir, never committed
+/.deepsec/
 
 # hardware sweep raw per-box logs (notes/062*.json is canonical)
 notes/hw/
