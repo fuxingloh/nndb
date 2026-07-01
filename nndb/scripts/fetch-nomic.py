@@ -39,7 +39,9 @@ ap.add_argument("--dims", default="768,512,256,128,64",
 ap.add_argument("--model", default="nomic-ai/nomic-embed-text-v1.5")
 ap.add_argument("--doc-prefix", default="search_document: ", help="Nomic task prefix for base+query")
 ap.add_argument("--query-prefix", default=None, help="override prefix for queries (asymmetric); default = doc-prefix")
-ap.add_argument("--batch", type=int, default=256)
+ap.add_argument("--batch", type=int, default=64)
+ap.add_argument("--max-seq", type=int, default=512,
+                help="cap tokens/doc — uncapped, one long doc blows up MPS O(seq^2) attention")
 ap.add_argument("--out", default="nndb/data/nomic")
 ap.add_argument("--name", default="nomic", help="file prefix stem -> <name><D>_base.fvecs")
 a = ap.parse_args()
@@ -78,6 +80,7 @@ from sentence_transformers import SentenceTransformer
 device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
 print(f"loading {a.model} on {device} ...")
 model = SentenceTransformer(a.model, trust_remote_code=True, device=device)
+model.max_seq_length = a.max_seq  # bound O(seq^2) attention so a long doc can't OOM MPS
 emb = model.encode(prefixed, batch_size=a.batch, show_progress_bar=True,
                    convert_to_numpy=True, normalize_embeddings=False).astype(np.float32)
 print(f"embedded: {emb.shape}")
