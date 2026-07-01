@@ -71,9 +71,19 @@ export class SpotStack extends cdk.Stack {
     const cpuType =
       procLetter === 'g' ? ec2.AmazonLinuxCpuType.ARM_64 : ec2.AmazonLinuxCpuType.X86_64;
 
+    // GPU families (g5/g6/p*) need NVIDIA drivers, which plain AL2023 lacks — use the
+    // AWS Deep Learning base AMI (AL2023 + NVIDIA driver + CUDA). x86_64 only.
+    const isGpu = /^(g|p)\d/.test(instanceType);
+    const machineImage = isGpu
+      ? ec2.MachineImage.fromSsmParameter(
+          '/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id',
+          { os: ec2.OperatingSystemType.LINUX },
+        )
+      : ec2.MachineImage.latestAmazonLinux2023({ cpuType });
+
     const lt = new ec2.LaunchTemplate(this, 'Lt', {
       instanceType: new ec2.InstanceType(instanceType),
-      machineImage: ec2.MachineImage.latestAmazonLinux2023({ cpuType }),
+      machineImage,
       keyPair,
       userData,
       blockDevices: [
