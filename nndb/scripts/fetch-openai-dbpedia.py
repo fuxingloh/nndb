@@ -35,10 +35,17 @@ want = a.target + a.queries
 
 from datasets import load_dataset
 print(f"loading up to {want} rows from {a.repo}[{a.split}] (sliced, non-streaming) ...")
-ds = load_dataset(a.repo, split=f"{a.split}[:{want}]")  # clamps to available (dataset = 1M)
-emb = np.asarray(ds[a.col], dtype=np.float32)
+# .with_format('numpy') → Arrow buffers come out as numpy directly; extract in chunks so
+# we never materialize the column as a giant Python list (that OOMs a 32GB box at 1M×1536).
+ds = load_dataset(a.repo, split=f"{a.split}[:{want}]").with_format("numpy")
+N = len(ds)
+native = int(np.asarray(ds[0][a.col]).shape[0])
+emb = np.empty((N, native), dtype=np.float32)
+CH = 50_000
+for i in range(0, N, CH):
+    emb[i : i + CH] = np.asarray(ds[i : i + CH][a.col], dtype=np.float32)
+    print(f"  extracted {min(i + CH, N)}/{N}")
 del ds
-N, native = emb.shape
 print(f"vectors: {emb.shape} (native dim {native})")
 
 nq = min(a.queries, N // 10)
