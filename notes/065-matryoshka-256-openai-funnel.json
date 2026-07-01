@@ -1,0 +1,21 @@
+{
+  "experiment": "065-matryoshka-256-openai-funnel",
+  "date": "2026-07-01",
+  "commit": "78163d1",
+  "hardware": "c8a.4xlarge (AMD Zen5, 16 vCPU) spot, us-east-2b",
+  "dataset": "OpenAI text-embedding-3-large (Qdrant dbpedia-entities 1M, precomputed), Matryoshka-truncated to 256-d then L2-renormalized",
+  "n_base": 990000,
+  "n_queries": 10000,
+  "dim": 256,
+  "k": 10,
+  "config": "1-bit binary funnel (sign bit, rotation x2 + residual, tile=8) + exact f32 rerank",
+  "chosen_operating_point": {"rerank": 2000, "recall_at_k": 0.9878, "qps": 4226.6, "p50_ms": 3.091, "p99_ms": 3.146},
+  "note": "QPS/latency on 16 vCPU; the Cohere hardware sweep (062/064) used 8 vCPU (.2xlarge), so QPS is not directly comparable. Recall is CPU-independent.",
+  "rerank_sweep": [
+    {"rerank": 500,  "recall_at_k": 0.9474, "qps": 6040.8, "p50_ms": 2.051, "p95_ms": 2.079, "p99_ms": 2.100},
+    {"rerank": 1000, "recall_at_k": 0.9731, "qps": 5275.1, "p50_ms": 2.414, "p95_ms": 2.444, "p99_ms": 2.485},
+    {"rerank": 2000, "recall_at_k": 0.9878, "qps": 4226.6, "p50_ms": 3.091, "p95_ms": 3.121, "p99_ms": 3.146},
+    {"rerank": 4000, "recall_at_k": 0.9944, "qps": 3092.4, "p50_ms": 4.398, "p95_ms": 4.476, "p99_ms": 4.584},
+    {"rerank": 8000, "recall_at_k": 0.9979, "qps": 2026.1, "p50_ms": 6.541, "p95_ms": 6.763, "p99_ms": 6.881}
+  ]
+}
