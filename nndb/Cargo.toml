@@ -3,6 +3,7 @@ name = "nndb"
 version = "0.1.0"
 edition = "2021"
 description = "In-memory vector search: exact brute-force baseline + ANN-Benchmarks-style eval harness"
+default-run = "vsearch"  # so `cargo run` (no --bin) runs the benchmark, despite the many experiment bins
 
 [[bin]]
 name = "vsearch"
