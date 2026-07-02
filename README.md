@@ -1,9 +1,17 @@
 # Nearest-Neighbor DB Experiments
 
-An in-memory vector-search engine, built from scratch to learn where the time
-actually goes. Every vector lives in RAM and is searched there — not disk-bound —
-and every change is a numbered, measured experiment. The whole point is the trend
-line: pushing **recall · QPS · p50 · p99** as far as first principles allow.
+**How many top-k vector queries per second can one CPU box really do?** An
+in-memory vector-search engine, built from scratch in Rust to find out. Every
+vector lives in RAM and is searched there — not disk-bound — and every change is a
+numbered, measured experiment. The whole point is the trend line — **recall · QPS ·
+p50 · p99** — pushed as far as first principles allow: **9 QPS** brute-force →
+**~960 @ 0.995 recall** on the box it was tuned on → **~2,310** on same-price Zen5
+→ **~19,900** on a full socket, where the memory bus saturates → **0.991 @ ~5,000**
+on 256-bit Matryoshka codes.
+
+→ **Full writeup (interactive):** <https://nndb.fuxing.dev> ·
+**All 66 experiments:** [/notes](https://nndb.fuxing.dev/notes) ·
+**The short story:** [fuxing.dev/2026/nndb](https://fuxing.dev/2026/nndb)
 
 This is a personal exploration, not a product — a recursive loop of
 *measure → explain → re-measure*, run to find the limits of vector search on one
@@ -29,8 +37,6 @@ near the exact baseline. The final arc (notes 065–066) runs it on a genuinely
 **Matryoshka** embedding at 256 bits — recall holds (0.99+ with rerank), the scan
 turns cache-resident and compute-bound, and a learned rotation becomes a free win.
 Per-machine numbers live in the writeup and notes, not here — they move.
-
-→ **Writeup:** <https://nndb.fuxing.dev> · **Full trail:** [`/notes`](https://nndb.fuxing.dev/notes)
 
 ## Layout
 
