@@ -1,4 +1,4 @@
-# NNDB — Nearest-Neighbor DB
+# Nearest-Neighbor DB Experiments
 
 An in-memory vector-search engine, built from scratch to learn where the time
 actually goes. Every vector lives in RAM and is searched there — not disk-bound —
@@ -58,7 +58,7 @@ cargo test --release                          # unit tests
 
 See [`nndb/README.md`](nndb/README.md) for the serving path and the Cohere dataset.
 
-## Scope & honesty
+## Scope & experiments
 
 - **Within-cell scan only.** This is the per-cell exact/funnel search, not a full
   ANN system — no IVF router, no HNSW graph over all N (both were measured and
