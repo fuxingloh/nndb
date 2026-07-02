@@ -111,7 +111,7 @@ The honest other half of the log. Some of these *work* and are simply off-missio
 - **PQ-prune, a 3-tier funnel** — binary → a product-quantization rerank → exact, cutting reads ~8× (1000 → 128 candidates) at 0.989 recall. A real win, but it only pays off in the disk regime above, so it's parked with it. ([060](/notes/060-pq-prune-funnel))
 - **Query-adaptive funnel width** — set each query's shortlist from its own Hamming-gap "certificate" instead of a fixed 500. Cuts mean rerank work ~34% at matched recall — but in RAM the scan dominates, so it barely moves QPS; it's a latency lever for the disk regime. ([048](/notes/048-query-adaptive-funnel))
 - **RaBitQ unbiased estimator** — the best recall-*per-bit* of anything tried (0.61 vs 0.46). But its scan is 40× slower: the estimator isn't a single SIMD instruction. Lever two, in one data point. ([028](/notes/028-rabitq-estimator))
-- **ITQ learned rotation** — learning the rotation (vs a random one) adds ~1.5 recall points, but the residual already buys +3–9 for free, and a dense learned rotation costs more to apply. Not worth it here. ([055](/notes/055-itq-learned-rotation))
+- **ITQ learned rotation** — learning the rotation (vs a random one) adds ~1.5 recall points, but the residual already buys +3–9 for free, and a dense learned rotation costs more to apply. Not worth it at 1024 bits — *revised at 256 bits in the epilogue below*, where it stacks with residual for +0.3 free points. ([055](/notes/055-itq-learned-rotation), [066](/notes/066-matryoshka-learned-rotation-regime-flip))
 - **Truncated (prefix) scan** — scan only the first 768 of 1024 bits for +23% QPS at 0.987 recall; a rotation is what makes the prefix viable (+4.6 pts). A usable low-recall knob, distinct from the bit-*floor* below which collapsed. ([014](/notes/014-prefix-scan), [027](/notes/027-rotation-rescues-prefix))
 - **Dead ends:** scalar PQ / OPQ (footprint, not speed — gather-bound), **HNSW inside a cell** (loses to a flat 1-bit scan at high-D), **bit-floor** (4× fewer scan bits bought only +8% QPS while recall fell 0.995 → 0.72), **bf16/int8 rerank, register-tiling, prefetch** (neutral-to-negative). All in [/notes](/notes).
 
@@ -152,17 +152,25 @@ It's a **two-tier wall**. A sub-full-socket box shares the socket's 12 memory ch
 
 A **1-bit binary funnel** — rotation + residual to make the bits count, tiling for throughput, a **carousel** so latency never cliffs — does **~0.995 recall in 128 MB**, at **~960 QPS on the Intel box it was tuned on and ~2310 QPS on the best-value AMD Zen5 silicon** (same engine, the difference is physical cores × popcount width). The deepest lesson, end to end: on a CPU, what wins — the representation *and* the box — is whatever makes the per-vector operation a single wide SIMD instruction.
 
-## What's next — from one node to a cluster
+## Epilogue: Matryoshka — the bandwidth wall, attacked from the embedding side
 
-Everything here is *one node*. But that's the point: once a single node is fully characterized — QPS, p50/p99, recall, the bandwidth ceiling, $/QPS — you can **design the whole embedding-search cluster on paper**, because the cluster is just these numbers tiled out. The directions below are deliberately a size up — full-infra, cluster-scale experiments that are too big for this study, but already on the map for when it grows into one.
+The bandwidth wall (064) said: past the knee, throughput = bus ÷ bytes-per-query. The last arc of the project ([065](/notes/065-matryoshka-256-openai-funnel), [066](/notes/066-matryoshka-learned-rotation-regime-flip)) attacked the *bytes* from the embedding side, with a model **trained** to be truncatable — OpenAI's text-embedding-3-large (MRL), sliced to **256 dims → 256-bit codes, 32 B/vector**. Earlier, truncating a *non*-Matryoshka embedding to 256 bits collapsed recall to 0.72 (the bit-floor dead end); a Matryoshka embedding is the counterfactual:
 
-- **Full IVF, not one cell.** This entire study lives *inside* a single IVF cell; a real index is thousands of them under a coarse router. The open questions move up a layer: how cell count and `nprobe` trade recall against the fraction of the corpus actually scanned, how to keep cell sizes balanced, and how the router itself is served.
-- **Elastic placement (k8s).** Treat the fleet as bin-packing: saturate each node's cores, then fill its *spare* RAM with resident centroids rather than letting it sit idle (064 showed the box is CPU-bound with RAM to spare). Any node with free memory should host more cells to lift aggregate QPS.
-- **Adaptive RAM ⇄ disk tiering.** Keep the 1-bit codes and hot centroids in RAM; let the cold f32 rerank store live on SSD and page back on demand (045 measured the economics). What's "hot" is decided against an explicit QPS / latency / recall budget.
-- **Latency-driven autoscaling.** Drive node count from p50/p99 SLOs and QPS head-room — and scale on how *full* a centroid is getting, not just raw load, so capacity is added *before* a cell thrashes, without churning RAM through constant insert / delete / rebalance.
-- **Adaptive recall.** Recall is a dial (shown per-node). At cluster scale, spend *idle* capacity on it: when QPS is below the ceiling, probe more cells for higher recall; tighten back under load. Recall that floats with utilization.
-- **Matryoshka codes.** Truncatable embeddings (027 hinted at it with prefix scans) to stream even fewer bytes per query — the most direct next attack on the bandwidth wall 064 just drew.
+- **Recall holds and dials cleanly**: 0.947 at C=500 up to **0.998** at C=8000 — no collapse, no plateau. The chosen point: **C=2000 → 0.991 recall @ ~5,000 QPS, p50 3.1 ms** (16 vCPU Zen5).
+- **All 990k codes stay unique** at 256 bits — recall loss is pure *ranking* error, exactly what rerank width fixes. (It also means the codes are near-incompressible — entropy per bit is the point.)
+- **The regime flipped**: at 31.7 MB the codes are cache-resident, the scan turns *compute*-bound, and tiling — +73% on the 1024-bit funnel — now *costs* 24%. Every byte reduction re-prices every lever (the 003→007 cascade, one more time).
+- **ITQ got un-parked**: at 256 bits a learned rotation stacks with the residual for +0.3 recall points, free at query time (055's verdict was a 1024-bit verdict).
 
-None of these are built here — they're the cluster-scale chapter. But the single-node numbers in this writeup are exactly the inputs that make them designable rather than guessed.
+A fitting last experiment: the project's two levers — fewer bytes, cheaper instructions — pushed to where the *embedding model itself* becomes the compression scheme.
 
-→ Browse the full trail: [**all 64 experiments**](/notes)
+## Where it stops, honestly
+
+Sixty-six experiments in, the single-node story is characterized: throughput ≈ `C·P/N` until the bus saturates, recall a separable dial (bits × shortlist × code quality), latency bounded by the carousel, and the buying rule for silicon. The remaining questions are **not answerable from a benchmark box**, because they depend on a real workload:
+
+- **Access patterns** — which cells are hot, how skewed the queries are, what's worth caching. Every tiering/placement decision (045, 060) inverts depending on the answer.
+- **Corpus shape** — how big, what embedding, what dim, how fast it grows and churns. The 064 wall and the Matryoshka result both say the *data* decides the design, not the engine.
+- **The recall that actually matters** — 0.99 vs 0.999 is a product question (what does a miss cost?), and it moves every operating point in this writeup.
+
+Cluster-scale directions — the IVF router over thousands of cells, elastic placement, RAM⇄disk tiering, latency-driven autoscaling, recall that floats with utilization — are all *designable on paper* from the numbers here. But designing them without a workload would just be speculation with extra steps. So this is where the study ends: **a recursive loop of measure → explain → re-measure, run until the limits of vector search on one box were mapped** — and the honest finding that the next limits belong to real usage, not the lab.
+
+→ Browse the full trail: [**all 66 experiments**](/notes)

@@ -5,9 +5,14 @@ actually goes. Every vector lives in RAM and is searched there — not disk-boun
 and every change is a numbered, measured experiment. The whole point is the trend
 line: pushing **recall · QPS · p50 · p99** as far as first principles allow.
 
-This is a personal exploration, not a product. I learn by building and measuring,
-so the repo *is* the lab notebook: ~60 numbered experiments, each with the numbers
-that justified (or killed) it.
+This is a personal exploration, not a product — a recursive loop of
+*measure → explain → re-measure*, run to find the limits of vector search on one
+box. The repo *is* the lab notebook: **66 numbered experiments**, each with the
+numbers that justified (or killed) it. The study is wrapped: the single-node story
+is characterized end to end (throughput model, recall dial, bandwidth wall, silicon
+buying rule, a Matryoshka epilogue), and the honest conclusion is that the next
+questions — access patterns, corpus shape, the recall a product actually needs —
+belong to real workloads, not the lab.
 
 ## What & why
 
@@ -18,10 +23,12 @@ cell lives a layer above and is deliberately out of scope (see *Scope & honesty*
 
 The engine that came out best is a **binary-quantization funnel**: keep one sign
 bit per dimension (32× smaller), scan all N with a Hamming/popcount kernel to get a
-few-hundred shortlist, then re-rank only those against the real vectors. It buys
-roughly two orders of magnitude in throughput over an f32 brute-force scan while
-holding recall near the exact baseline. The live numbers, per machine, are in the
-writeup and the notes — not pinned here, because they keep moving.
+shortlist, then re-rank only those against the real vectors. It buys roughly two
+orders of magnitude in throughput over an f32 brute-force scan while holding recall
+near the exact baseline. The final arc (notes 065–066) runs it on a genuinely
+**Matryoshka** embedding at 256 bits — recall holds (0.99+ with rerank), the scan
+turns cache-resident and compute-bound, and a learned rotation becomes a free win.
+Per-machine numbers live in the writeup and notes, not here — they move.
 
 → **Writeup:** <https://nndb.fuxing.dev> · **Full trail:** [`/notes`](https://nndb.fuxing.dev/notes)
 

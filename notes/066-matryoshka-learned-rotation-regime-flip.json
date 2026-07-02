@@ -1,0 +1,30 @@
+{
+  "experiment": "066-matryoshka-learned-rotation-regime-flip",
+  "date": "2026-07-02",
+  "commit": "1a3faf0",
+  "hardware": "c8a.4xlarge (AMD Zen5, 16 vCPU) spot, us-east-2c",
+  "dataset": "OpenAI text-embedding-3-large (Qdrant dbpedia 1M precomputed), Matryoshka-256, 990k base / 10k queries (2k used per run)",
+  "config": "256-bit binary funnel + exact f32 rerank; ITQ = learned 256x256 rotation (50k sample, 30 iters) vs random FWHT rotation; both with residual",
+  "itq_vs_random_with_residual": [
+    {"rerank": 500,  "random": 0.9474, "itq": 0.9541, "delta": 0.0067},
+    {"rerank": 1000, "random": 0.9731, "itq": 0.9780, "delta": 0.0049},
+    {"rerank": 2000, "random": 0.9878, "itq": 0.9907, "delta": 0.0029},
+    {"rerank": 4000, "random": 0.9944, "itq": 0.9968, "delta": 0.0024},
+    {"rerank": 8000, "random": 0.9979, "itq": 0.9992, "delta": 0.0013}
+  ],
+  "code_uniqueness": {"n": 990000, "bits": 256, "unique_codes": 990000, "collisions": 0,
+    "note": "identical with and without residual — recall loss is ranking error, not identity loss"},
+  "tile_sweep_scan_only_qps": [
+    {"batch": 1, "qps": 8861.3}, {"batch": 8, "qps": 6791.7}, {"batch": 32, "qps": 6251.4}
+  ],
+  "tile_sweep_c2000": [
+    {"batch": 1, "recall": 0.9878, "qps": 4965.7, "p50_ms": 3.131, "p99_ms": 3.322},
+    {"batch": 4, "recall": 0.9878, "qps": 4119.0, "p50_ms": 3.134, "p99_ms": 3.233},
+    {"batch": 8, "recall": 0.9878, "qps": 4147.7, "p50_ms": 3.130, "p99_ms": 3.265}
+  ],
+  "final_operating_point": {
+    "config": "learned rotation (ITQ) + residual + batch=1 + rerank C=2000",
+    "recall_at_k": 0.9907, "qps": 4966, "p50_ms": 3.13, "p99_ms": 3.32,
+    "note": "recall from the itq bin (identical scan+rerank workload as vsearch, cross-validated: random column reproduces vsearch exactly); QPS/latency from vsearch batch=1 C=2000 (rotation choice does not affect query-time work). 16 vCPU — not comparable to the 8-vCPU sweep in 062/064."
+  }
+}
