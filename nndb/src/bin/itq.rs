@@ -43,6 +43,9 @@ struct Args {
     iters: usize,
     #[arg(long, value_delimiter = ',', default_value = "200,1000")]
     rerank: Vec<usize>,
+    /// Subtract the base centroid before rotation (residual encoding, history 046).
+    #[arg(long)]
+    residual: bool,
 }
 
 fn sub(v: &Vectors, n: usize) -> Vectors {
@@ -175,9 +178,18 @@ fn main() -> std::io::Result<()> {
         (0..nq).into_par_iter().map(|q| search::knn(&base, qsub.row(q), args.k)).collect();
 
     // b-dim projection (FWHT rotate → first b dims), for both base and queries.
+    // Optional residual (046): subtract the base centroid first — stage-1 codes only;
+    // GT and rerank still use the original vectors. This is the bigger recall lever.
     let rot = Rotation::new(dim, 2, 0x5EED);
-    let vbase = project(&base, &rot, b);
-    let vq = project(&qsub, &rot, b);
+    let (vbase, vq) = if args.residual {
+        let c = quant::centroid(&base);
+        (
+            project(&quant::subtract_centroid(&base, &c), &rot, b),
+            project(&quant::subtract_centroid(&qsub, &c), &rot, b),
+        )
+    } else {
+        (project(&base, &rot, b), project(&qsub, &rot, b))
+    };
     let _ = quant::binarize_query; // (kept import path consistent)
 
     // --- baseline: random rotation = R identity (just the FWHT prefix sign bits) ---
