@@ -58,6 +58,12 @@ p99 3.3 ms**, 31.7 MB codes + 1.0 GB f32 store, 990k vectors, 16 vCPU.
 
 ## Caveats
 
+- **The regime flip is a corpus-size result, not a code-size law.** 990k × 32 B =
+  31.7 MB happens to fit in L3 on this box — that's why the scan reads compute-bound
+  and tiling hurts. At 100M vectors the same 256-bit codes are 3.2 GB, DRAM-streamed,
+  and tiling should pay again (047 measured exactly that cache→DRAM transition).
+  This dataset is too small to say more than: re-sweep the tile when bytes-per-corpus
+  changes.
 - QPS on 16 vCPU (4xlarge) — the 062/064 sweep used 8 vCPU; don't compare across.
 - ITQ recall measured in the `itq` bench bin; not yet wired into `vsearch`/server as
   a flag (the scan+rerank workload is identical, but end-to-end serving numbers with
