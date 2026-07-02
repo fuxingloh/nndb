@@ -14,6 +14,7 @@ import { ExactLab } from "@/components/labs/exact-lab";
 import { ServingLab } from "@/components/labs/serving-lab";
 import { HardwareLab } from "@/components/labs/hardware-lab";
 import { ScalingLab } from "@/components/labs/scaling-lab";
+import { MatryoshkaLab } from "@/components/labs/matryoshka-lab";
 
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
@@ -180,7 +181,11 @@ Three laws survived every experiment:
 
 ## Epilogue: Matryoshka — the bandwidth wall, attacked from the embedding side
 
-The bandwidth wall (064) said: past the knee, throughput = bus ÷ bytes-per-query. The last arc of the project ([065](/notes/065-matryoshka-256-openai-funnel), [066](/notes/066-matryoshka-learned-rotation-regime-flip)) attacked the *bytes* from the embedding side, with a model **trained** to be truncatable — OpenAI's text-embedding-3-large (MRL), sliced to **256 dims → 256-bit codes, 32 B/vector**. Earlier, truncating a *non*-Matryoshka embedding to 256 bits collapsed recall to 0.72 (the bit-floor dead end); a Matryoshka embedding is the counterfactual:
+The bandwidth wall (064) said: past the knee, throughput = bus ÷ bytes-per-query. The last arc of the project ([065](/notes/065-matryoshka-256-openai-funnel), [066](/notes/066-matryoshka-learned-rotation-regime-flip)) attacked the *bytes* from the embedding side, with a model **trained** to be truncatable — OpenAI's text-embedding-3-large (MRL), sliced to **256 dims → 256-bit codes, 32 B/vector**. Earlier, truncating a *non*-Matryoshka embedding to 256 bits collapsed recall to 0.72 (the [bit-floor](/notes/058-bit-floor) dead end); a Matryoshka embedding is the counterfactual:
+
+<Card n="11" title="matryoshka-256 — recall vs shortlist, against the bit-floor">
+  <MatryoshkaLab />
+</Card>
 
 - **Recall holds and dials cleanly**: 0.947 at C=500 up to **0.998** at C=8000 — no collapse, no plateau. The chosen point: **C=2000 → 0.991 recall @ ~5,000 QPS, p50 3.1 ms** (16 vCPU Zen5).
 - **All 990k codes stay unique** at 256 bits — recall loss is pure *ranking* error, exactly what rerank width fixes. (It also means the codes are near-incompressible — entropy per bit is the point.)
