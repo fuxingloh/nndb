@@ -1,0 +1,18 @@
+{
+  "experiment": "071-typed-kernel-bounds-check-tax",
+  "date": "2026-07-03",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) on-demand, ap-northeast-1",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067-070)",
+  "change": "Two-step removal of the disassembly-verified 'entry check' tax in hamming(): (1) gate now tests BOTH slice lengths (a.len()==4 && b.len()==4) so the compiler can prove all 8 indexes in-range and drop the b-side bounds guards; (2) new `fixed256` cargo feature + typed hamming4(&[u64;4],&[u64;4]) compiles the width dispatch out entirely. Assembly before: ~6 of ~13 uops/call were length gate + bounds checks + panic-stub branches.",
+  "funnel_10m_batch8": [
+    {"build": "069 baseline (single-length gate)", "rerank": 500,  "qps": 902, "p50_ms": 16.29, "recall_at_k": 0.9220},
+    {"build": "069 baseline (single-length gate)", "rerank": 2000, "qps": 847, "p50_ms": 17.46, "recall_at_k": 0.9737},
+    {"build": "default (both-length gate)",        "rerank": 500,  "qps": 994, "p50_ms": 10.17, "recall_at_k": 0.9220},
+    {"build": "default (both-length gate)",        "rerank": 2000, "qps": 924, "p50_ms": 11.19, "recall_at_k": 0.9737},
+    {"build": "--features fixed256 (typed)",       "rerank": 500,  "qps": 1028, "p50_ms": 10.62, "recall_at_k": 0.9220},
+    {"build": "--features fixed256 (typed)",       "rerank": 2000, "qps": 955,  "p50_ms": 11.77, "recall_at_k": 0.9737}
+  ],
+  "gains": {"both_length_gate": "+9-10% QPS, p50 -6ms (16.3->10.2)", "fixed256_on_top": "+3.4%", "total_vs_069": "+13-14% QPS at identical recall"},
+  "note": "Recall bit-identical across all builds (same integers computed). The p50 drop is the same uop diet applied to the single-threaded latency pass, where dispatch pressure is undiluted by memory stalls. Cumulative at C=2000: 650 (067) -> 847 (069) -> 955 (071); C=500 crosses 1000 QPS at 10M on 16 vCPU. Dispatch-slot accounting predicted ~+20% in-cache from removing ~6/18 uops; measured +13% at the knee is consistent with the stream diluting kernel wins ~half."
+}

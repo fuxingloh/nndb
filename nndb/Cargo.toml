@@ -9,6 +9,16 @@ default-run = "vsearch"  # so `cargo run` (no --bin) runs the benchmark, despite
 name = "vsearch"
 path = "src/main.rs"
 
+[features]
+# Build the binary-quant hot path for EXACTLY 256-bit codes (4 u64 words) — the
+# funnel's operating point since 065. Turns hamming()'s runtime width dispatch into
+# a compile-time assumption: typed 4-word kernel, no length gate, no bounds checks
+# (the disassembly-verified "entry check" tax, ~6 of ~13 uops/call — see 069).
+# Codes of any other width PANIC loudly at conversion — never a wrong answer.
+# Default build stays variable-length, results byte-identical either way.
+#   cargo build --release --features fixed256
+fixed256 = []
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rayon = "1"

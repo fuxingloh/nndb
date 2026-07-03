@@ -221,24 +221,71 @@ pub fn binarize_query(query: &[f32], bits: usize) -> Vec<u64> {
 /// the naive form is already SIMD. Manually splitting the reduction into multiple
 /// scalar accumulators (the trick that helps the f32 FMA kernel) *defeats* that
 /// autovectorization — measured ~2x slower on M3, see history/012. Don't.
+/// The 256-bit (4-word) kernel, typed. `&[u64; 4]` puts the length in the TYPE:
+/// the compiler proves every index in-range and emits ZERO bounds checks and no
+/// length gate — the "entry check" tax seen in the vsearch disassembly (~6 of
+/// ~13 uops/call) exists only for the untyped `&[u64]` route.
+///
+/// What the machine does with the body (Zen5 / EPYC 9R45, rustc -C target-cpu=native;
+/// verified against objdump of the release binary):
+///
+///   the arithmetic (3 uops — capacity for 4 docs/cycle if this were all):
+///     vmovdqu  ymm0, [a]        load pipe    1 of 2×512-bit loads/cycle
+///     vpxor    ymm0, ymm0, [b]  load+vec ALU query XOR (load folded); any of 4 pipes
+///     vpopcntq ymm0, ymm0       vec ALU      only 2 of the 4 pipes take popcount
+///
+///   the answer-format tax (3 dependent uops — rustc found the vpsadbw trick:
+///   lane counts ≤64 each, so they narrow losslessly to bytes and one
+///   sum-of-absolute-differences-vs-zero does the horizontal add):
+///     vpmovqb  xmm0, ymm0       shuffle      4×u64 counts → 4 bytes
+///     vpsadbw  xmm0, xmm0,xmm1  vec ALU      byte-sum sideways = the total
+///     vmovd    eax,  xmm0       shuffle      lane 0 → scalar for the caller's cmp
+///
+/// XOR+popcount is ~¼ cycle of machine; the rest is converting 4 lanes into the
+/// ONE SCALAR the heap compare demands, per doc. Dispatch width (8 uops/cycle),
+/// not any ALU, is what binds — fewer uops per doc is the only lever (see 069).
+#[inline(always)]
+pub fn hamming4(a: &[u64; 4], b: &[u64; 4]) -> u32 {
+    (a[0] ^ b[0]).count_ones()
+        + (a[1] ^ b[1]).count_ones()
+        + (a[2] ^ b[2]).count_ones()
+        + (a[3] ^ b[3]).count_ones()
+}
+
 #[inline]
 pub fn hamming(a: &[u64], b: &[u64]) -> u32 {
-    // Fixed-width fast path: 256-bit codes (4 words) are the funnel's main operating
-    // point, and the generic loop below does NOT vectorize well at this width — loop
-    // control dominates 4 popcounts (069: fixed-width is ~3x at 10M scale). The
-    // unrolled body compiles to straight-line XOR+POPCNT/VPOPCNT with no branch.
-    // (012/050's "the naive loop is optimal" was measured at 1024 bits and holds there.)
-    if a.len() == 4 {
-        return (a[0] ^ b[0]).count_ones()
-            + (a[1] ^ b[1]).count_ones()
-            + (a[2] ^ b[2]).count_ones()
-            + (a[3] ^ b[3]).count_ones();
+    // fixed256 build: the width is a compile-time promise (constructors assert it),
+    // so dispatch straight to the typed kernel. The try_from length checks fold to
+    // a single predicted cmp; any non-256-bit code panics loudly — never a wrong answer.
+    #[cfg(feature = "fixed256")]
+    {
+        let a4 = <&[u64; 4]>::try_from(a).expect("fixed256 build: codes must be 256-bit");
+        let b4 = <&[u64; 4]>::try_from(b).expect("fixed256 build: codes must be 256-bit");
+        hamming4(a4, b4)
     }
-    let mut d = 0u32;
-    for i in 0..a.len() {
-        d += (a[i] ^ b[i]).count_ones();
+    #[cfg(not(feature = "fixed256"))]
+    {
+        // Variable-width build. Fast path: 256-bit codes (4 words) — the funnel's
+        // operating point since 065; the generic loop below does NOT vectorize well
+        // at this width (loop control dominates 4 popcounts; 069: fixed-width ~3x
+        // at 10M). NOTE the checked-slice tax this route keeps: the len gate plus
+        // bounds guards on `b` (only `a`'s length is tested) — build with
+        // `--features fixed256` to compile them out.
+        if a.len() == 4 && b.len() == 4 {
+            return (a[0] ^ b[0]).count_ones()
+                + (a[1] ^ b[1]).count_ones()
+                + (a[2] ^ b[2]).count_ones()
+                + (a[3] ^ b[3]).count_ones();
+        }
+        // Generic width (e.g. 1024-bit = 16 words): trip count long enough that the
+        // autovectorizer emits full-zmm VPOPCNTDQ and loop overhead amortizes — the
+        // 012/050 "naive loop is optimal" regime.
+        let mut d = 0u32;
+        for i in 0..a.len() {
+            d += (a[i] ^ b[i]).count_ones();
+        }
+        d
     }
-    d
 }
 
 /// Top-k by smallest Hamming (most agreeing sign bits).
@@ -297,19 +344,38 @@ pub fn knn_binary_funnel_tiled(
             let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
                 (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
             let mut acc = vec![0u32; t];
+            // THE hot loop: n=10M iterations streaming the code array (32 B/doc,
+            // 320 MB at 10M — the S/T term of the tiling model; sequential, so the
+            // HW prefetcher tracks it and SW prefetch adds nothing).
             for i in 0..n {
-                let doc = bbase.row(i);
-                // per-query hamming (autovectorizes to VPOPCNTDQ over words);
-                // doc stays hot in L1 across the tile.
+                let doc = bbase.row(i); // LEA only (scalar ALU); the 32 B load is in hamming()
+                // t independent hamming() calls per doc. Independent across j, so the
+                // ~448-entry ROB overlaps their dependent reduction chains — that
+                // overlap holds the scan at ~2 cyc/doc against the chain's latency.
+                // The doc's cache line is reused t× from L1 (the point of tiling).
                 for j in 0..t {
                     acc[j] = hamming(qrows[j], doc);
                 }
+                // Selection, kept OUT of the hamming loop so that loop stays branch-free.
                 for j in 0..t {
                     let h = acc[j];
                     let hp = &mut heaps[j];
                     if hp.len() < want {
+                        // cold: only until the heap fills (first `want` docs)
                         hp.push((h, i as u32));
                     } else if h < hp.peek().unwrap().0 {
+                        // HOT COMPARE, 99.83% path ends here: peek() is one load of
+                        // heap[0] — same address every iteration, L1-pinned — then
+                        // cmp+branch on the scalar ALUs (6/cycle; never the limiter).
+                        // Predicted not-taken; measured 0.06% branch-miss. It is this
+                        // demand for a per-doc SCALAR h that forces hamming()'s 5-uop
+                        // reduction tax — the two comments are one story.
+                        //
+                        // rare path (~0.17% of docs; E[inserts] ≈ C·ln(n/C)): sift-down,
+                        // ~log2(C)=11 levels of load/cmp/store at data-dependent
+                        // addresses. One heap = C×8 B = 16 KB (fits 48 KB L1); t=8
+                        // heaps = 128 KB → live in L2 — part of the k·T tile-carry
+                        // cost that sets the batch=8 optimum.
                         hp.pop();
                         hp.push((h, i as u32));
                     }
@@ -482,6 +548,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "fixed256"))] // 2-d → 1-word codes; fixed256 builds reject non-256-bit by design
     fn binary_rerank_recovers_exact() {
         // 4 unit-ish vectors; rerank of binary candidates should return exact top-1.
         let base = Vectors {
@@ -493,5 +560,32 @@ mod tests {
         let bq = QuantBinary::from_f32(&q);
         let got = knn_binary_rerank_batch(&bb, &bq, &base, &q, 1, 4);
         assert_eq!(got[0][0], 0); // exact nearest after rerank
+    }
+
+    #[test]
+    fn hamming_256bit_all_paths_agree() {
+        // 256-d codes = 4 words: the operating point. hamming(), hamming4(), and a
+        // scalar reference must agree exactly, under BOTH build configs.
+        let mk = |seed: u64| -> Vec<u64> {
+            let mut z = seed;
+            (0..4)
+                .map(|_| {
+                    z = z.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    z
+                })
+                .collect()
+        };
+        for s in 0..32u64 {
+            let (a, b) = (mk(s), mk(s ^ 0xDEAD));
+            let reference: u32 = a.iter().zip(&b).map(|(x, y)| (x ^ y).count_ones()).sum();
+            assert_eq!(hamming(&a, &b), reference);
+            let (a4, b4) = (<&[u64; 4]>::try_from(&a[..]).unwrap(), <&[u64; 4]>::try_from(&b[..]).unwrap());
+            assert_eq!(hamming4(a4, b4), reference);
+        }
+        // self-distance is zero; distance to complement is 256
+        let a = mk(7);
+        let inv: Vec<u64> = a.iter().map(|x| !x).collect();
+        assert_eq!(hamming(&a, &a), 0);
+        assert_eq!(hamming(&a, &inv), 256);
     }
 }
