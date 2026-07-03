@@ -36,22 +36,25 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
       />
     ),
     hr: () => <hr className="my-12 border-border" />,
+    // Tables mirror Streamdown's rendered structure/classes exactly (as used on
+    // /notes via the Markdown component), so MDX and note tables look the same:
+    // padded sidebar frame → bordered card → divided rows, muted header band.
     table: (props) => (
-      <div className="my-6 overflow-x-auto">
-        <table className="w-full border-collapse text-left text-sm" {...props} />
+      <div className="my-6 flex flex-col gap-2 rounded-lg border border-border bg-sidebar p-2">
+        <div className="border-collapse overflow-x-auto overflow-y-auto rounded-md border border-border bg-background">
+          <table className="w-full divide-y divide-border text-left" {...props} />
+        </div>
       </div>
     ),
-    thead: (props) => <thead className="border-b border-border-hover" {...props} />,
+    thead: (props) => <thead className="bg-muted/80" {...props} />,
     th: (props) => (
-      <th
-        className="px-3 py-2 font-mono text-[11px] font-medium uppercase tracking-wider text-dim"
-        {...props}
-      />
+      <th className="whitespace-nowrap px-4 py-2 text-left font-semibold text-sm text-text" {...props} />
     ),
-    tr: (props) => <tr className="border-b border-border last:border-0" {...props} />,
+    tr: (props) => <tr className="border-border" {...props} />,
     td: (props) => (
-      <td className="px-3 py-2 text-[15px] leading-7 text-body tabular-nums" {...props} />
+      <td className="px-4 py-2 text-sm leading-7 text-body tabular-nums" {...props} />
     ),
+    tbody: (props) => <tbody className="divide-y divide-border" {...props} />,
     Card,
     Stat,
     ...components,
