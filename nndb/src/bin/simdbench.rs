@@ -73,6 +73,81 @@ fn ham_chunks8(a: &[u64], b: &[u64]) -> u32 {
     d
 }
 
+// ---- 256-bit-specialized kernels (the 068 regime: compute-bound at scale) ----
+// A 256-bit code is exactly 4 u64 words — half a zmm. Fixing the width at compile
+// time removes loop control and lets the compiler keep everything in registers.
+
+#[inline(always)]
+fn ham256(a: &[u64], b: &[u64]) -> u32 {
+    debug_assert!(a.len() >= 4 && b.len() >= 4);
+    (a[0] ^ b[0]).count_ones()
+        + (a[1] ^ b[1]).count_ones()
+        + (a[2] ^ b[2]).count_ones()
+        + (a[3] ^ b[3]).count_ones()
+}
+
+// Scan with the fixed-width kernel: docs contiguous, so this is a pure sequential
+// stream of 32 B records — the shape the engine's funnel actually runs.
+fn scan256(q: &[u64], docs: &[u64], n: usize) -> u64 {
+    let qq = [q[0], q[1], q[2], q[3]];
+    let mut sink = 0u64;
+    for j in 0..n {
+        let d = &docs[j * 4..j * 4 + 4];
+        sink += ((qq[0] ^ d[0]).count_ones()
+            + (qq[1] ^ d[1]).count_ones()
+            + (qq[2] ^ d[2]).count_ones()
+            + (qq[3] ^ d[3]).count_ones()) as u64;
+    }
+    sink
+}
+
+// Doc-PAIR kernel: two 256-bit docs = one full 512-bit lane. The compiler sees an
+// 8-word XOR+popcount body and can emit a single VPOPCNTDQ per doc-pair, with the
+// query broadcast across both zmm halves. 2 docs/instruction is the width ceiling.
+fn scan256_pair(q: &[u64], docs: &[u64], n: usize) -> u64 {
+    let qq = [q[0], q[1], q[2], q[3], q[0], q[1], q[2], q[3]];
+    let mut sink = 0u64;
+    let pairs = n / 2;
+    for p in 0..pairs {
+        let d = &docs[p * 8..p * 8 + 8];
+        let mut lo = 0u32;
+        let mut hi = 0u32;
+        for w in 0..4 {
+            lo += (qq[w] ^ d[w]).count_ones();
+            hi += (qq[w + 4] ^ d[w + 4]).count_ones();
+        }
+        sink += lo as u64 + hi as u64;
+    }
+    for j in (pairs * 2)..n {
+        sink += ham256(&qq[..4], &docs[j * 4..j * 4 + 4]) as u64;
+    }
+    sink
+}
+
+// Doc-QUAD interleave: 4 independent 256-bit Hammings in flight (2 zmm of work),
+// the 050 ILP trick re-cut for fixed width. In the 068 compute-bound regime the
+// pipeline-fill win should survive at scale (unlike 050's memory-bound 1024-bit).
+fn scan256_quad(q: &[u64], docs: &[u64], n: usize) -> u64 {
+    let qq = [q[0], q[1], q[2], q[3]];
+    let mut s = [0u64; 4];
+    let quads = n / 4;
+    for p in 0..quads {
+        let d = &docs[p * 16..p * 16 + 16];
+        for l in 0..4 {
+            let o = l * 4;
+            s[l] += ((qq[0] ^ d[o]).count_ones()
+                + (qq[1] ^ d[o + 1]).count_ones()
+                + (qq[2] ^ d[o + 2]).count_ones()
+                + (qq[3] ^ d[o + 3]).count_ones()) as u64;
+        }
+    }
+    let mut sink = s[0] + s[1] + s[2] + s[3];
+    for j in (quads * 4)..n {
+        sink += ham256(&qq[..4], &docs[j * 4..j * 4 + 4]) as u64;
+    }
+    sink
+}
+
 // the 012/023 "loser" reconfirmed on AVX-512: 4 manual accumulators over words.
 #[inline(always)]
 fn ham_acc4(a: &[u64], b: &[u64]) -> u32 {
@@ -228,6 +303,21 @@ fn main() {
     let gcmp = n as f64 / secs / 1e9;
     eprintln!("  {:<26} {gcmp:>6.3} Gcmp/s  (sink={sink})", "interleave4 (ILP)");
     out.push(format!("{{\"variant\":\"interleave4\",\"gcmp_per_s\":{gcmp:.4}}}"));
+
+    // fixed-width 256-bit variants (only meaningful when --bits 256)
+    if words == 4 {
+        let fixed: [(&str, fn(&[u64], &[u64], usize) -> u64); 3] = [
+            ("fixed256", scan256),
+            ("fixed256_pair (zmm/2doc)", scan256_pair),
+            ("fixed256_quad (ILP4)", scan256_quad),
+        ];
+        for (name, f) in fixed {
+            let (secs, sink) = time_it(args.secs, || f(&q, &docs, n));
+            let gcmp = n as f64 / secs / 1e9;
+            eprintln!("  {name:<26} {gcmp:>6.3} Gcmp/s  (sink={sink})");
+            out.push(format!("{{\"variant\":\"{name}\",\"gcmp_per_s\":{gcmp:.4}}}"));
+        }
+    }
 
     // --- scan-sharing (carousel/tiled) sweep: T queries share each doc read ---
     // If bandwidth-bound, Gcmp/s rises with T (amortization) then plateaus at the

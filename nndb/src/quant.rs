@@ -223,6 +223,17 @@ pub fn binarize_query(query: &[f32], bits: usize) -> Vec<u64> {
 /// autovectorization — measured ~2x slower on M3, see history/012. Don't.
 #[inline]
 pub fn hamming(a: &[u64], b: &[u64]) -> u32 {
+    // Fixed-width fast path: 256-bit codes (4 words) are the funnel's main operating
+    // point, and the generic loop below does NOT vectorize well at this width — loop
+    // control dominates 4 popcounts (069: fixed-width is ~3x at 10M scale). The
+    // unrolled body compiles to straight-line XOR+POPCNT/VPOPCNT with no branch.
+    // (012/050's "the naive loop is optimal" was measured at 1024 bits and holds there.)
+    if a.len() == 4 {
+        return (a[0] ^ b[0]).count_ones()
+            + (a[1] ^ b[1]).count_ones()
+            + (a[2] ^ b[2]).count_ones()
+            + (a[3] ^ b[3]).count_ones();
+    }
     let mut d = 0u32;
     for i in 0..a.len() {
         d += (a[i] ^ b[i]).count_ones();

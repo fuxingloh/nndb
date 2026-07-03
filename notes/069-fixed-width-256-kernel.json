@@ -1,0 +1,29 @@
+{
+  "experiment": "069-fixed-width-256-kernel",
+  "date": "2026-07-02",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) on-demand, ap-northeast-1; kernel microbench cross-checked on M3 (NEON)",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067/068)",
+  "change": "hamming() gains a fixed-width fast path for 4-word (256-bit) codes: fully unrolled XOR+popcount, no loop control. Generic loop untouched for other widths.",
+  "kernel_microbench_gcmp_per_s": {
+    "note": "simdbench --bits 256, single thread. baseline = generic count_ones loop.",
+    "zen5_in_cache_512kb":  {"baseline": 0.555, "fixed256": 2.230, "fixed256_pair": 5.978, "fixed256_quad": 2.741},
+    "zen5_at_scale_320mb":  {"baseline": 0.493, "fixed256": 1.415, "fixed256_pair": 1.313, "fixed256_quad": 1.373},
+    "m3_in_cache_512kb":    {"baseline": 0.461, "fixed256": 1.214, "fixed256_pair": 1.378, "fixed256_quad": 1.415}
+  },
+  "funnel_10m": [
+    {"batch": 1,  "rerank": 500,  "recall_at_k": 0.9221, "qps": 629, "p50_ms": 18.47, "ns_per_distance": 0.1590},
+    {"batch": 1,  "rerank": 2000, "recall_at_k": 0.9739, "qps": 645, "p50_ms": 19.73, "ns_per_distance": 0.1551},
+    {"batch": 1,  "rerank": 8000, "recall_at_k": 0.9934, "qps": 539, "p50_ms": 24.12, "ns_per_distance": 0.1856},
+    {"batch": 4,  "rerank": 2000, "recall_at_k": 0.9737, "qps": 764, "p50_ms": 19.43, "ns_per_distance": 0.1310},
+    {"batch": 8,  "rerank": 500,  "recall_at_k": 0.9220, "qps": 902, "p50_ms": 16.29, "ns_per_distance": 0.1108},
+    {"batch": 8,  "rerank": 2000, "recall_at_k": 0.9737, "qps": 847, "p50_ms": 17.46, "ns_per_distance": 0.1180},
+    {"batch": 8,  "rerank": 8000, "recall_at_k": 0.9932, "qps": 669, "p50_ms": 22.42, "ns_per_distance": 0.1495},
+    {"batch": 16, "rerank": 2000, "recall_at_k": 0.9737, "qps": 830, "p50_ms": 19.64, "ns_per_distance": 0.1205},
+    {"batch": 32, "rerank": 2000, "recall_at_k": 0.9737, "qps": 742, "p50_ms": 17.42, "ns_per_distance": 0.1348}
+  ],
+  "selection_check": {"select": "count", "batch": 1, "rerank": 2000, "qps": 494, "note": "counting selection still loses to the heap at 10M (extra dists buffer traffic)"},
+  "chosen_operating_point": {"batch": 8, "rerank": 2000, "recall_at_k": 0.9737, "qps": 847, "p50_ms": 17.46},
+  "comparison": {"before_067_068": {"batch": 1, "qps": 668}, "after": {"batch": 8, "qps": 847}, "gain": "+27-30% QPS at identical recall; recall bit-identical at every config"},
+  "regime_note": "The faster kernel re-prices the compute/bandwidth balance: 068 (slow kernel) found batch=1 optimal and tiling useless; with ~3x cheaper popcount the scan is fast enough that DRAM matters again, so tiling pays (+31% batch=1->8) and the optimum returns to batch=8. Deeper tiles (16/32) give nothing back."
+}
