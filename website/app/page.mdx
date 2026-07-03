@@ -1,6 +1,6 @@
 ---
 title: Pushing vector search QPS & latency to the ceiling
-description: 66 measured experiments on how far one CPU box can go at in-memory top-k vector search — from a brute-force baseline to a 1-bit funnel, Matryoshka codes, and the memory-bandwidth wall.
+description: 74 measured experiments on how far one CPU box can go at in-memory top-k vector search — from a brute-force baseline to a 1-bit funnel, Matryoshka codes at 10M scale, and a kernel taken to its dispatch-width floor.
 ---
 
 import { PageHeader, Stat } from "@/components/shell";
@@ -19,7 +19,7 @@ import { MatryoshkaLab } from "@/components/labs/matryoshka-lab";
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
 
-It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels, Matryoshka embeddings — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. **Sixty-six numbered experiments** later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/notes](/notes).
+It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels, Matryoshka embeddings — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. **Seventy-four numbered experiments** later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/notes](/notes).
 </PageHeader>
 
 The headline numbers — **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box**:
@@ -30,7 +30,7 @@ The headline numbers — **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 
   <Stat value="8 ms" label="p50 latency" />
 </div>
 
-~100× the throughput of the brute-force baseline, same recall, 128 MB of index. The same engine goes further on other silicon and other embeddings: **~2,310 QPS** on 8-core AMD Zen5 ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)), and **0.991 recall @ ~5,000 QPS, p50 3.1 ms** on 256-bit Matryoshka codes (16 vCPU; [065](/notes/065-matryoshka-256-openai-funnel), [066](/notes/066-matryoshka-learned-rotation-regime-flip)).
+~100× the throughput of the brute-force baseline, same recall, 128 MB of index. The same engine goes further on other silicon, other embeddings, and other corpus sizes: **~2,310 QPS** on 8-core AMD Zen5 ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)), **0.991 recall @ ~5,000 QPS** on 256-bit Matryoshka codes at 1M ([065](/notes/065-matryoshka-256-openai-funnel)), and — the final arc — **10 million vectors at 0.974 recall, ~1,470 QPS, p50 12 ms on 16 vCPU** ([067](/notes/067-10m-matryoshka-funnel-dram-wall)–[074](/notes/074-wide-store)), after a kernel-autopsy series took the scan to its dispatch-width floor at **2.26× held-recall throughput** ([/alu/072](/alu/072), [/alu/073](/alu/073)).
 
 <Card n="01" title="how we got here — QPS at held recall">
   <JourneyLab />
@@ -78,7 +78,7 @@ Every experiment trades recall against speed and bytes, so I track recall at eac
 
 ## Throughput: tiling
 
-The scan is bandwidth-bound, so reuse each loaded code: compare it against a **tile** of queries while it's hot in cache, before moving on. More comparisons per byte read; the base streams once per tile instead of per query. The tile has to fit in cache (L1/L2), which bounds how big it can get — tile≈8 was the sweet spot here. **+73% QPS**, identical results. ([016](/notes/016-tiled-binary-scan), [038](/notes/038-tile-retune)) — *but only while the scan is bandwidth-bound: when the whole code store fits in cache (as the small Matryoshka-256 corpus did), tiling flips to a cost ([066](/notes/066-matryoshka-learned-rotation-regime-flip)).*
+The scan is bandwidth-bound, so reuse each loaded code: compare it against a **tile** of queries while it's hot in cache, before moving on. More comparisons per byte read; the base streams once per tile instead of per query. The tile has to fit in cache (L1/L2), which bounds how big it can get — tile≈8 was the sweet spot here. **+73% QPS**, identical results. ([016](/notes/016-tiled-binary-scan), [038](/notes/038-tile-retune)) — *but the optimal tile is a moving target: it flips to a cost when the corpus fits in cache ([066](/notes/066-matryoshka-learned-rotation-regime-flip)), back to useless when the kernel is slow enough to hide the stream ([068](/notes/068-10m-bound-detection-tiling-itq)), then to essential — and deeper (T=8→32) — as each kernel speedup re-exposes the stream ([069](/notes/069-fixed-width-256-kernel), [073](/notes/073-word-planar-query-groups)). The tile depth is* √(stream-cost / tile-carry-cost), *and both sides move.*
 
 ## The frontier: recall vs QPS
 
@@ -155,7 +155,7 @@ A **1-bit binary funnel** — rotation + residual to make the bits count, tiling
 
 ## The field guide — every trick, its price, and when it holds
 
-Sixty-six experiments compress to this table. The last column is the one that matters: **almost every verdict is conditional on the regime** — how many bytes the scan streams, and whether that fits in cache. Shrink the codes and the verdicts flip (it happened twice in this study: 003→007, and again at 066).
+Seventy-four experiments compress to this table. The last column is the one that matters: **almost every verdict is conditional on the regime** — how many bytes the scan streams, whether that fits in cache, and how fast the kernel chews them. Shrink the codes or speed the kernel and the verdicts flip (it happened four times in this study: 003→007, 066, 068, 069→073).
 
 | trick | effect (measured) | holds when |
 |---|---|---|
@@ -164,7 +164,10 @@ Sixty-six experiments compress to this table. The last column is the one that ma
 | **Residual / centroid subtraction** ([046](/notes/046-cell-size-residual)) | +3–9 recall pts, free | inside an IVF cell (needs a centroid) |
 | **Learned rotation (ITQ)** ([055](/notes/055-itq-learned-rotation), [066](/notes/066-matryoshka-learned-rotation-regime-flip)) | +0.3–1 recall pts, free at query time | low bit budgets (256); marginal at 1024 |
 | **Rerank width C** ([009](/notes/009-binary-rerank), [065](/notes/065-matryoshka-256-openai-funnel)) | recall 0.95→0.998, ~linear QPS cost | always — *the* operating-point dial |
-| **Query tiling** ([016](/notes/016-tiled-binary-scan), [038](/notes/038-tile-retune), [066](/notes/066-matryoshka-learned-rotation-regime-flip)) | +73% QPS at 128 MB codes; **−24% when the corpus fits in L3** | **bandwidth-bound only** — re-sweep per machine and per *corpus size* (codes × N, not just bits) |
+| **Query tiling** ([016](/notes/016-tiled-binary-scan), [066](/notes/066-matryoshka-learned-rotation-regime-flip), [068](/notes/068-10m-bound-detection-tiling-itq), [073](/notes/073-word-planar-query-groups)) | +73% QPS at 128 MB codes; −24% in-cache; useless under a slow kernel; **+31% and deeper (T=32) under a fast one** | **whenever the stream out-costs the tile state** — T\* = √(s/k); re-sweep after every kernel or corpus change |
+| **Fixed-width typed kernel** ([069](/notes/069-fixed-width-256-kernel), [071](/notes/071-typed-kernel-bounds-check-tax), [072](/notes/072-unsafe-width-cast)) | 650→1093 QPS: unroll + prove/remove checks — **dispatch slots, not ALUs, bind** | short codes (≤4 words), where loop control and guards rival the math |
+| **Word-planar query groups** ([073](/notes/073-word-planar-query-groups), [074](/notes/074-wide-store)) | 1093→1471 QPS: transpose queries once, kill gathers + lane extraction | tiled scans on wide-SIMD; needs intrinsics — the autovectorizer refuses the shape |
+| **Matryoshka bits-cascade** ([070](/notes/070-matryoshka-bits-cascade-negative)) | Pareto-dominated at every point | never — rotation spreads information uniformly; no prefix of the *code* is special |
 | **Intra-query parallelism / carousel** ([021](/notes/021-intra-query-parallel), [039–041](/notes/041-carousel-fanout-frontier)) | 4.4× lower p50; no latency cliff under burst | serving; fan-out must shrink as load grows |
 | **Prefix scan** ([014](/notes/014-prefix-scan), [027](/notes/027-rotation-rescues-prefix)) | +23% QPS at −0.8 recall pts | rotated codes; a knob, not a default |
 | **Matryoshka truncation** ([065](/notes/065-matryoshka-256-openai-funnel)) | 4× smaller codes, recall *holds* (0.99+) | **only MRL-trained embeddings** — a non-MRL prefix collapses to 0.72 |
@@ -174,10 +177,11 @@ Sixty-six experiments compress to this table. The last column is the one that ma
 | HNSW inside a cell ([043](/notes/043-hnsw-in-cell-crossover)) | loses to flat 1-bit scan | only pays at low-D large cells |
 | int8/bf16 rerank, register-tiling, prefetch, multi-acc popcount ([012](/notes/012-popcount-autovectorizes), [015](/notes/015-int8-rerank-tier), [023](/notes/023-register-tiled-kernel), [024](/notes/024-rerank-prefetch)) | neutral to −60% | never here — don't fight the autovectorizer |
 
-Three laws survived every experiment:
+Four laws survived every experiment:
 1. **The winning representation is the one whose per-vector op is a single wide SIMD instruction** (popcount beat every smarter-but-gather scheme, until PQ4 made the gather itself SIMD).
-2. **Every byte reduction re-prices every lever.** Faster kernel → memory-bound → batching pays (007). Corpus fits in cache → compute-bound → tiling hurts (066). The boundary is *bytes × N vs cache*, so the same codes flip verdicts at different corpus sizes — never carry a tuning verdict across regimes.
+2. **Every byte reduction re-prices every lever — and so does every kernel speedup.** Faster kernel → memory-bound → batching pays (007). Corpus fits in cache → compute-bound → tiling hurts (066). Kernel 3× faster → stream re-exposed → tiling essential again, deeper (069, 073). The boundary is *bytes × N vs cache vs kernel rate* — never carry a tuning verdict across regimes.
 3. **Recall loss in a good binary code is ranking error, not identity loss** (990k/990k codes unique at 256 bits) — which is why over-retrieve + exact rerank recovers it almost for free, and why the funnel architecture is right.
+4. **The cost is never the arithmetic — it's the answer format.** Found four times in the kernel autopsies ([067–074](/alu/072)): the horizontal reduction (069), the per-doc scalar the heap demands (072), the lane extraction (073), each ~half the loop's budget while XOR+popcount idled. On a wide machine, throughput = uops/item ÷ dispatch width, and the uops that count are the ones the *consumer's format* forces. Shrink the answer, not the math.
 
 ## Epilogue: Matryoshka — the bandwidth wall, attacked from the embedding side
 
@@ -189,14 +193,29 @@ The bandwidth wall (064) said: past the knee, throughput = bus ÷ bytes-per-quer
 
 - **Recall holds and dials cleanly**: 0.947 at C=500 up to **0.998** at C=8000 — no collapse, no plateau. The chosen point: **C=2000 → 0.991 recall @ ~5,000 QPS, p50 3.1 ms** (16 vCPU Zen5).
 - **All 990k codes stay unique** at 256 bits — recall loss is pure *ranking* error, exactly what rerank width fixes. (It also means the codes are near-incompressible — entropy per bit is the point.)
-- **The regime flipped — with a caveat**: at 31.7 MB the codes are cache-resident, the scan turns *compute*-bound, and tiling — +73% on the 1024-bit funnel — now *costs* 24%. But be honest about the confound: 990k × 32 B is simply a **small dataset** — the flip is "this corpus fits in L3," not a property of 256-bit codes. At 100M vectors the same codes are 3.2 GB, DRAM-streamed, and tiling should pay again (047 showed exactly this cache→DRAM transition at scale). The real lesson stands either way: every byte reduction re-prices every lever — *per corpus size*.
-- **ITQ got un-parked**: at 256 bits a learned rotation stacks with the residual for +0.3 recall points, free at query time (055's verdict was a 1024-bit verdict).
+- **The regime flipped — with a caveat the sequel resolved**: at 31.7 MB the codes are cache-resident and tiling *costs* 24%. The caveat — "at scale, DRAM-streamed, tiling should pay again" — turned out **wrong in an instructive way**: at 10M the codes are 320 MB, far past any cache, and tiling *still* bought nothing ([068](/notes/068-10m-bound-detection-tiling-itq)) — the kernel was slow enough to hide the stream entirely. Only after the kernel got 2× faster did tiling flip back to essential ([069](/notes/069-fixed-width-256-kernel)). The regime boundary was never just *bytes vs cache* — it's *bytes vs cache vs kernel rate*.
+- **ITQ got un-parked, then re-parked**: +0.3 points at 256 bits on 1M ([066](/notes/066-matryoshka-learned-rotation-regime-flip)); at 10M the gain vanished into noise ([068](/notes/068-10m-bound-detection-tiling-itq)). Random FWHT + residual is the config.
 
-A fitting last experiment: the project's two levers — fewer bytes, cheaper instructions — pushed to where the *embedding model itself* becomes the compression scheme.
+## The last arc: 10 million vectors, and a kernel taken to the floor
+
+The finale scaled the corpus 10× — **10M of Snowflake's 71M precomputed arctic-embed vectors** (MRL-256, like OpenAI's) — and then, when the scan turned out *compute*-bound even at 320 MB of codes, spent five experiments taking the kernel apart instruction by instruction. Each step: disassemble the binary, find where dispatch slots go, remove one thing, measure, repeat. The interactive autopsies are at [/alu/072](/alu/072) and [/alu/073](/alu/073); the arc, at held recall 0.974 and bit-identical results throughout:
+
+| step | change | QPS (C=2000) |
+|---|---|---|
+| [067](/notes/067-10m-matryoshka-funnel-dram-wall) | baseline at 10M | 650 |
+| [069](/notes/069-fixed-width-256-kernel) | fixed-width unroll (012's verdict was width-scoped) | 847 |
+| [071](/notes/071-typed-kernel-bounds-check-tax) | prove the bounds checks away (types, not `unsafe`) | 955 |
+| [072](/notes/072-unsafe-width-cast) | unsafe width cast → LLVM re-vectorizes the whole tile loop | 1,093 |
+| [073](/notes/073-word-planar-query-groups) | word-planar query transpose — gathers and pointer surgery die | 1,307 |
+| [074](/notes/074-wide-store) | wide store — the last lane extraction dies | **1,471** |
+
+**2.26× from kernel work alone, recall untouched** — after the project had twice concluded the kernel was done (012, 050; both verdicts were regime-scoped). Alongside: Matryoshka-256 recall *holds* at 10× corpus (no collapse — the shortlist just needs widening with N), a bits-cascade tier was tried and Pareto-dominated ([070](/notes/070-matryoshka-bits-cascade-negative)), and every micro-opt was gated by objdump plus a same-session negative control — two of which (a bundled refactor, a hand-hoisted broadcast) *failed* and are recorded as such.
+
+The final operating points at 10M on 16 vCPU: **0.922 @ 1,685 QPS · 0.974 @ 1,471 QPS · 0.993 @ 925 QPS**, p50 11–17 ms. The loop that remains is ~20 uops per doc-group — data movement that must happen, math that must happen, one store — with the per-core streaming ceiling now in sight. The uop mine is exhausted; what's left lives in bytes and locality.
 
 ## Where it stops, honestly
 
-Sixty-six experiments in, the single-node story is characterized: throughput ≈ `C·P/N` until the bus saturates, recall a separable dial (bits × shortlist × code quality), latency bounded by the carousel, and the buying rule for silicon. The remaining questions are **not answerable from a benchmark box**, because they depend on a real workload:
+Seventy-four experiments in, the single-node story is characterized: throughput ≈ `C·P/N` until the bus saturates, recall a separable dial (bits × shortlist × code quality), latency bounded by the carousel, the kernel at its dispatch-width floor, and the buying rule for silicon. The remaining questions are **not answerable from a benchmark box**, because they depend on a real workload:
 
 - **Access patterns** — which cells are hot, how skewed the queries are, what's worth caching. Every tiering/placement decision ([045](/notes/045-disk-resident-economics), [060](/notes/060-pq-prune-funnel)) inverts depending on the answer.
 - **Data size** — how big the corpus is, how fast it grows and churns. It decides which side of the cache/DRAM boundary the codes land on — and that boundary flips the tuning verdicts ([066](/notes/066-matryoshka-learned-rotation-regime-flip)) and sets where the bandwidth wall bites ([064](/notes/064-c8a-scaling-bandwidth-roofline)).
@@ -205,4 +224,4 @@ Sixty-six experiments in, the single-node story is characterized: throughput ≈
 
 Cluster-scale directions — the IVF router over thousands of cells, elastic placement, RAM⇄disk tiering, latency-driven autoscaling, recall that floats with utilization — are all *designable on paper* from the numbers here. But designing them without a workload would just be speculation with extra steps. So this is where the study ends: **a recursive loop of measure → explain → re-measure, run until the limits of vector search on one box were mapped** — and the honest finding that the next limits belong to real usage, not the lab.
 
-→ Browse the full trail: [**all 66 experiments**](/notes)
+→ Browse the full trail: [**all 74 experiments**](/notes)
