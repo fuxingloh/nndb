@@ -23,23 +23,27 @@ A first-principles study of **how many top-k vector queries per second a single 
 It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels, Matryoshka embeddings — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. **Seventy-four numbered experiments** later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/notes](/notes).
 </PageHeader>
 
-The study ran in two eras, and the headline is the pair. **Where it started — Cohere v3, 1M × 1024-dim, one 8-core EC2 box** (the embedding you get; make the engine fast):
+The study ran in two eras, and the difference between them is **corpus scale**.
 
-<div className="my-6 grid grid-cols-3 gap-3">
+**Era one — 1 million documents.** Cohere v3 (1024-dim, the embedding you get), one 8-core EC2 box; the work is making the *engine* fast:
+
+<div className="my-6 grid grid-cols-4 gap-3">
+  <Stat value="1M" label="documents" />
   <Stat value="0.995" label="recall@10" />
   <Stat value="~960" label="QPS" />
   <Stat value="8 ms" label="p50 latency" />
 </div>
 
-**Where it ended — Matryoshka-trained embeddings, 10M × 256-bit codes, one 16-vCPU box** (the embedding as part of the index design; then take the kernel to its floor):
+**Era two — 10 million documents.** Matryoshka-trained embeddings truncated to 256-bit codes (the embedding as part of the index design), one 16-vCPU box; the work is taking the kernel to its floor:
 
-<div className="my-6 grid grid-cols-3 gap-3">
+<div className="my-6 grid grid-cols-4 gap-3">
+  <Stat value="10M" label="documents" />
   <Stat value="0.974" label="recall@10" />
   <Stat value="~1,470" label="QPS" />
   <Stat value="12 ms" label="p50 latency" />
 </div>
 
-The first row is ~100× the brute-force baseline at the same recall, in 128 MB. The second is **10× the corpus** of the first at comparable throughput — bought by moving to MRL-trained embeddings that survive truncation to 256 bits ([065](/notes/065-matryoshka-256-openai-funnel), [067](/notes/067-10m-matryoshka-funnel-dram-wall)), then a kernel-autopsy series that took the scan to its dispatch-width floor for **2.26× at held recall** ([067–074](/notes/067-10m-matryoshka-funnel-dram-wall), [/alu/072](/alu/072), [/alu/073](/alu/073)). The same engine spans other silicon too: **~2,310 QPS** on 8-core Zen5 at 1M ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)).
+Era one is ~100× the brute-force baseline at the same recall, in 128 MB. Era two searches **10× the documents at *higher* throughput** — bought by moving to MRL-trained embeddings that survive truncation to 256 bits ([065](/notes/065-matryoshka-256-openai-funnel), [067](/notes/067-10m-matryoshka-funnel-dram-wall)), then a kernel-autopsy series that took the scan to its dispatch-width floor for **2.26× at held recall** ([067–074](/notes/067-10m-matryoshka-funnel-dram-wall), [/alu/072](/alu/072), [/alu/073](/alu/073)). The same engine spans other silicon too: **~2,310 QPS** on 8-core Zen5 at 1M ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)).
 
 <Card n="01" title="how we got here — QPS at held recall">
   <JourneyLab />
