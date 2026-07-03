@@ -80,6 +80,22 @@ fn apply_rot(vbig: &[f32], r: &[f32], n: usize, b: usize) -> Vec<f32> {
     out
 }
 
+/// In-place V ← V·R, row-parallel with a per-row scratch. At 10M×256 the base
+/// projection is ~10 GB; a second rotated copy would push peak RSS past a 32 GB box.
+fn apply_rot_inplace(v: &mut [f32], r: &[f32], b: usize) {
+    v.par_chunks_mut(b).for_each(|row| {
+        let mut tmp = vec![0f32; b];
+        for j in 0..b {
+            let mut acc = 0f32;
+            for i in 0..b {
+                acc += row[i] * r[i * b + j];
+            }
+            tmp[j] = acc;
+        }
+        row.copy_from_slice(&tmp);
+    });
+}
+
 /// Pack sign bits of an n×b row-major matrix into QuantBinary (b bits/vec).
 fn binarize(mat: &[f32], n: usize, b: usize) -> QuantBinary {
     let words = b.div_ceil(64);
@@ -181,7 +197,7 @@ fn main() -> std::io::Result<()> {
     // Optional residual (046): subtract the base centroid first — stage-1 codes only;
     // GT and rerank still use the original vectors. This is the bigger recall lever.
     let rot = Rotation::new(dim, 2, 0x5EED);
-    let (vbase, vq) = if args.residual {
+    let (mut vbase, vq) = if args.residual {
         let c = quant::centroid(&base);
         (
             project(&quant::subtract_centroid(&base, &c), &rot, b),
@@ -199,7 +215,9 @@ fn main() -> std::io::Result<()> {
     // --- ITQ: learn R on a sample, apply, binarize ---
     let m = args.train.min(base.len());
     let r = fit_itq(&vbase[..m * b], m, b, args.iters);
-    let itq_base = binarize(&apply_rot(&vbase, &r, base.len(), b), base.len(), b);
+    // rotate vbase in place (last use — the random codes are already built)
+    apply_rot_inplace(&mut vbase, &r, b);
+    let itq_base = binarize(&vbase, base.len(), b);
     let itq_q = binarize(&apply_rot(&vq, &r, nq, b), nq, b);
 
     let mut pts = Vec::new();

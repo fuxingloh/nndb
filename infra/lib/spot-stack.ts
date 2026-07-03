@@ -32,6 +32,9 @@ export class SpotStack extends cdk.Stack {
     const sshCidr: string = c.tryGetContext('sshCidr') ?? '0.0.0.0/0';
     const maxSpotPrice: string | undefined = c.tryGetContext('maxSpotPrice');
     const volumeGb = Number(c.tryGetContext('volumeGb') ?? 30);
+    // -c spot=false → on-demand. For runs that must survive (spot reclaims kill
+    // c8a in us-east-2 within minutes some days); costs on-demand price.
+    const useSpot = c.tryGetContext('spot') !== 'false';
 
     // Key pair: use an existing one if named, otherwise CREATE a fresh one.
     // A created key pair's private key is auto-stored in SSM Parameter Store
@@ -96,11 +99,15 @@ export class SpotStack extends cdk.Stack {
       ],
       // One-time spot request: if interrupted it's gone (fine for ephemeral
       // benchmarking — no auto-replace surprises).
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME,
-        interruptionBehavior: ec2.SpotInstanceInterruption.TERMINATE,
-        ...(maxSpotPrice ? { maxPrice: Number(maxSpotPrice) } : {}),
-      },
+      ...(useSpot
+        ? {
+            spotOptions: {
+              requestType: ec2.SpotRequestType.ONE_TIME,
+              interruptionBehavior: ec2.SpotInstanceInterruption.TERMINATE,
+              ...(maxSpotPrice ? { maxPrice: Number(maxSpotPrice) } : {}),
+            },
+          }
+        : {}),
     });
 
     const azIndex = props?.azIndex ?? Number(c.tryGetContext('azIndex') ?? 0);

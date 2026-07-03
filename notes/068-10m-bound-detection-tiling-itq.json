@@ -1,0 +1,38 @@
+{
+  "experiment": "068-10m-bound-detection-tiling-itq",
+  "date": "2026-07-02",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) ON-DEMAND, ap-northeast-1 (Tokyo)",
+  "dataset": "Snowflake arctic-embed-m-v1.5 (MSMARCO v2.1, precomputed, 10M), Matryoshka 768->256, L2-normalized — same prep as 067, independently re-fetched",
+  "n_base": 10000000,
+  "dim": 256,
+  "k": 10,
+  "replication_note": "Rerank-C sweep re-ran incidentally on this box: recall matches 067 (us-east-2) to 4 decimals at every C; QPS within ~4%. 067 replicates cross-region.",
+  "batch_sweep_c2000": [
+    {"batch": 1,  "qps": 668.5, "p50_ms": 18.780, "ns_per_distance": 0.1496, "qps_cv": 0.0402},
+    {"batch": 2,  "qps": 536.9, "p50_ms": 18.800, "ns_per_distance": 0.1864},
+    {"batch": 4,  "qps": 608.0, "p50_ms": 18.700, "ns_per_distance": 0.1644},
+    {"batch": 8,  "qps": 625.0, "p50_ms": 18.700, "ns_per_distance": 0.1601},
+    {"batch": 16, "qps": 640.0, "p50_ms": 18.800, "ns_per_distance": 0.1562},
+    {"batch": 32, "qps": 600.8, "p50_ms": 18.885, "ns_per_distance": 0.1664}
+  ],
+  "working_set_sweep_batch8_c2000": [
+    {"n_base": 500000,   "codes_mb": 16,  "qps": 7495, "ns_per_distance": 0.2668},
+    {"n_base": 1000000,  "codes_mb": 32,  "qps": 4598, "ns_per_distance": 0.2175, "marginal_ns_per_code": 0.1682},
+    {"n_base": 2000000,  "codes_mb": 64,  "qps": 2679, "ns_per_distance": 0.1867, "marginal_ns_per_code": 0.1559},
+    {"n_base": 4000000,  "codes_mb": 128, "qps": 1482, "ns_per_distance": 0.1687, "marginal_ns_per_code": 0.1507},
+    {"n_base": 10000000, "codes_mb": 320, "qps": 632,  "ns_per_distance": 0.1582, "marginal_ns_per_code": 0.1512}
+  ],
+  "bound_verdict": "COMPUTE-BOUND at 10M: marginal ns/code FALLS from 0.168 (32MB, cache-resident) to 0.151 (320MB, 10x past LLC) — no step up crossing the cache boundary; the per-N average only shrinks as fixed rerank cost amortizes. Tiling confirms: batch=1 is fastest (668 QPS), batch 2-32 all within -10%/-4% of it. A DRAM-bound scan would reward tiling ~linearly; this one doesn't reward it at all.",
+  "itq_at_10m": {
+    "config": "ITQ 256x256 learned rotation (50k sample, 30 iters) vs random FWHT, both + residual; nq=1000 (recall differs slightly from the 10k-query sweep), exact GT",
+    "points": [
+      {"c": 500,  "random": 0.9400, "itq": 0.9420, "delta": 0.0020},
+      {"c": 1000, "random": 0.9666, "itq": 0.9650, "delta": -0.0016},
+      {"c": 2000, "random": 0.9815, "itq": 0.9804, "delta": -0.0011},
+      {"c": 4000, "random": 0.9915, "itq": 0.9897, "delta": -0.0018},
+      {"c": 8000, "random": 0.9958, "itq": 0.9957, "delta": -0.0001}
+    ],
+    "verdict": "ITQ does NOT help at 10M on arctic-256: deltas are noise (+0.002 to -0.002), vs +0.7 to +0.1 pts on 1M OpenAI-256 (066). The 50k training sample is 0.5% of a 10M corpus (vs 5% at 1M); and arctic/MSMARCO differs from OpenAI/dbpedia, so sample-dilution vs embedding-geometry is unresolved."
+  }
+}
