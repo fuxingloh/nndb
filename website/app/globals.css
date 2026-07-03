@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Streamdown's table/code controls are styled with Tailwind utilities inside
+   node_modules — Tailwind v4 must scan them or the buttons render unstyled. */
+@source "../node_modules/streamdown/dist/*.js";
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
@@ -23,6 +26,17 @@
   --color-green: #34d399; /* positive */
   --color-rose: #fb7185; /* negative */
   --color-violet: #a78bfa;
+
+  /* shadcn-style tokens Streamdown's native components read (tables, controls,
+     link-safety modal). Mapped onto the site palette so its look-and-feel
+     lands in our hues without restyling its internals. */
+  --color-background: #131318; /* = panel */
+  --color-foreground: #f3f3f6; /* = text */
+  --color-muted: #1b1b21; /* = grid */
+  --color-muted-foreground: #7d7d88; /* = dim */
+  --color-sidebar: #1b1b21; /* control-bar surface */
+  --color-primary: #818cf8; /* = accent */
+  --color-primary-foreground: #0a0a0c;
 }
 
 :root {
