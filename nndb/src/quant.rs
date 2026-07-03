@@ -348,15 +348,88 @@ pub fn knn_binary_funnel_tiled(
             let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
                 (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
             let mut acc = vec![0u32; t];
+
+            // 073 (fixed256): word-planar query groups. The 072 objdump showed the
+            // vectorized j-loop spending ~73% of its dispatch budget re-establishing
+            // loop invariants: ~10 uops/doc de-interleaving qrows' fat pointers into
+            // gather addresses, then 4 vpgatherqq/doc re-fetching the SAME 256 B of
+            // query words — all because the Vec<&[u64]> indirection and the heap acc
+            // store left LLVM unable to prove the queries stable across iterations.
+            // Fix the REPRESENTATION: transpose each group of ≤8 queries once into a
+            // stack array qw[w][j] = query j's word w (values, not references — the
+            // 072 negative control showed pointer arrays break LLVM's analysis).
+            // Addresses become compile-time offsets; the 4 query zmm rows are
+            // provably non-aliasing loop invariants and hoist out of the doc loop.
+            // Short groups (t not a multiple of 8) pad with zero-lanes whose garbage
+            // distances are simply never read (selection loops j < t) — no branch in
+            // the hot loop. Expected codegen/doc: 4× (vpbroadcastq+vpxorq+vpopcntq+
+            // vpaddq) + store ≈ 22 uops for 8 comparisons.
+            #[cfg(feature = "fixed256")]
+            let qw_groups: Vec<[[u64; 8]; 4]> = (0..t.div_ceil(8))
+                .map(|g| {
+                    let mut qw = [[0u64; 8]; 4];
+                    for j in 0..8.min(t - g * 8) {
+                        // SAFETY: fixed256 invariant — every code row is exactly 4 u64s.
+                        let q = qrows[g * 8 + j];
+                        debug_assert_eq!(q.len(), 4);
+                        for w in 0..4 {
+                            qw[w][j] = q[w];
+                        }
+                    }
+                    qw
+                })
+                .collect();
+
             // THE hot loop: n=10M iterations streaming the code array (32 B/doc,
             // 320 MB at 10M — the S/T term of the tiling model; sequential, so the
             // HW prefetcher tracks it and SW prefetch adds nothing).
             for i in 0..n {
-                let doc = bbase.row(i); // LEA only (scalar ALU); the 32 B load is in hamming()
-                // t independent hamming() calls per doc. Independent across j, so the
-                // ~448-entry ROB overlaps their dependent reduction chains — that
-                // overlap holds the scan at ~2 cyc/doc against the chain's latency.
-                // The doc's cache line is reused t× from L1 (the point of tiling).
+                let doc = bbase.row(i); // LEA only (scalar ALU); one 32 B load per doc
+                #[cfg(feature = "fixed256")]
+                {
+                    // SAFETY: fixed256 invariant — doc row is exactly 4 u64s.
+                    let d = unsafe { &*(doc.as_ptr() as *const [u64; 4]) };
+                    for (g, qw) in qw_groups.iter().enumerate() {
+                        // The planar kernel must be written as intrinsics: LLVM's
+                        // autovectorizer refuses this reduction shape from scalar
+                        // code (measured: it emits 32 scalar popcnt/doc — slower
+                        // than the 072 gather form it builds by itself).
+                        #[cfg(all(target_arch = "x86_64", target_feature = "avx512vpopcntdq"))]
+                        let lanes: [u64; 8] = unsafe {
+                            use std::arch::x86_64::*;
+                            let mut accv = _mm512_setzero_si512();
+                            // 4× (broadcast doc word ^ 8 query words → popcount → add):
+                            // the qw rows are loop-invariant stack loads LLVM hoists.
+                            for w in 0..4 {
+                                let dv = _mm512_set1_epi64(d[w] as i64);
+                                let qv = _mm512_loadu_si512(qw[w].as_ptr() as *const _);
+                                accv = _mm512_add_epi64(accv, _mm512_popcnt_epi64(_mm512_xor_si512(dv, qv)));
+                            }
+                            let mut out = [0u64; 8];
+                            _mm512_storeu_si512(out.as_mut_ptr() as *mut _, accv);
+                            out
+                        };
+                        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512vpopcntdq")))]
+                        let lanes: [u64; 8] = {
+                            let mut lanes = [0u64; 8];
+                            for w in 0..4 {
+                                let dw = d[w];
+                                for j in 0..8 {
+                                    lanes[j] += (dw ^ qw[w][j]).count_ones() as u64;
+                                }
+                            }
+                            lanes
+                        };
+                        let base_j = g * 8;
+                        for j in base_j..(base_j + 8).min(t) {
+                            acc[j] = lanes[j - base_j] as u32;
+                        }
+                    }
+                }
+                // Variable-width path: t independent hamming() calls per doc. The
+                // ~448-entry ROB overlaps their reduction chains; the doc's cache
+                // line is reused t× from L1 (the point of tiling).
+                #[cfg(not(feature = "fixed256"))]
                 for j in 0..t {
                     acc[j] = hamming(qrows[j], doc);
                 }

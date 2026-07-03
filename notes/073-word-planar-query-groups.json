@@ -1,0 +1,31 @@
+{
+  "experiment": "073-word-planar-query-groups",
+  "date": "2026-07-03",
+  "commit": "0431b7b",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) on-demand, ap-northeast-1",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067-072)",
+  "change": "fixed256 funnel: queries transposed once per tile into word-planar stack groups (qw[w][j] = query j's word w), doc word broadcast against 8 lane-resident queries via AVX-512 intrinsics (vpbroadcastq+vpxorq+vpopcntq+vpaddq x4, one store). Kills the 072 ASM's per-doc invariant re-establishment: ~10 uops of fat-pointer de-interleave + 4 vpgatherqq re-fetching the same 256 B of query words every doc.",
+  "autovectorizer_detour": [
+    {"attempt": "scalar planar loop, u32 lanes", "qps_c2000": 822, "why": "LLVM scalarized: 32 scalar popcnt/doc"},
+    {"attempt": "scalar planar loop, u64 lanes end-to-end", "qps_c2000": 736, "why": "still scalarized; worse"},
+    {"attempt": "explicit intrinsics (_mm512_popcnt_epi64)", "qps_c2000": 1185, "why": "the reduction shape must be written as intrinsics — the autovectorizer refuses it from scalar code, even though it BUILT the same instruction sequence itself in 072 (from a shape it recognized)"}
+  ],
+  "tile_resweep_c2000": [
+    {"batch": 8,  "qps": 1220},
+    {"batch": 16, "qps": 1318},
+    {"batch": 24, "qps": 1241},
+    {"batch": 32, "qps": 1403},
+    {"batch": 48, "qps": 1265, "cv": 0.025},
+    {"batch": 64, "qps": 1244, "cv": 0.061},
+    {"batch": 96, "qps": 866},
+    {"batch": 128, "qps": 893, "cv": 0.18}
+  ],
+  "final_operating_points_batch32": [
+    {"rerank": 500,  "recall_at_k": 0.9220, "qps": 1542, "p50_ms": 11.80, "p99_ms": 11.95},
+    {"rerank": 2000, "recall_at_k": 0.9737, "qps": 1307, "p50_ms": 12.97, "p99_ms": 13.39},
+    {"rerank": 8000, "recall_at_k": 0.9932, "qps": 885,  "p50_ms": 17.42, "p99_ms": 18.41}
+  ],
+  "gain": "+18-25% over 072 at batch=8 like-for-like (1185 vs 1106 hides the real win: the knee MOVED — per-query tile state is now 32 B in shared zmm rows instead of pointer+heap machinery, so batch=32 becomes optimal at 1307). C=500 at 1542 QPS.",
+  "kernel_arc_c2000": {"067": 650, "069_unroll": 847, "071_typed": 955, "072_unsafe": 1093, "073_planar_b32": 1307},
+  "note": "objdump confirms: zero vpgatherqq in the funnel (the 2 remaining in the binary are the itq/other bins), no vpermq pointer surgery; the loop is broadcast/xor/popcnt/add x4 + one store, query zmm rows hoisted. Tiling model: with per-doc group cost ~17 uops and per-group state 4 zmm, T* = sqrt(s/k) moved from 8 to ~32; past 64 the qw_groups array (64x256B) plus heaps spill L2 and rayon chunking gets noisy (cv 6-18%)."
+}
