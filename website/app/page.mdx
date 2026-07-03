@@ -28,7 +28,7 @@ The study ran in two eras, and the difference between them is **corpus scale**.
 **Era one — 1 million documents.** Cohere v3 (1024-dim, the embedding you get), one 8-core EC2 box; the work is making the *engine* fast:
 
 <div className="my-6 grid grid-cols-4 gap-3">
-  <Stat value="1M" label="documents" />
+  <Stat value="1M" label="documents" tone="amber" />
   <Stat value="0.995" label="recall@10" />
   <Stat value="~960" label="QPS" />
   <Stat value="8 ms" label="p50 latency" />
@@ -37,7 +37,7 @@ The study ran in two eras, and the difference between them is **corpus scale**.
 **Era two — 10 million documents.** Matryoshka-trained embeddings truncated to 256-bit codes (the embedding as part of the index design), one 16-vCPU box; the work is taking the kernel to its floor:
 
 <div className="my-6 grid grid-cols-4 gap-3">
-  <Stat value="10M" label="documents" />
+  <Stat value="10M" label="documents" tone="green" />
   <Stat value="0.974" label="recall@10" />
   <Stat value="~1,470" label="QPS" />
   <Stat value="12 ms" label="p50 latency" />

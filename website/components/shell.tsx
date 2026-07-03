@@ -41,11 +41,27 @@ export function Card({ n, title, children }: { n: string; title: string; childre
   );
 }
 
-// A compact stat, e.g. headline numbers.
-export function Stat({ value, label }: { value: ReactNode; label: ReactNode }) {
+// A compact stat, e.g. headline numbers. `tone` lifts one stat out of the
+// indigo default — used for the era-defining corpus sizes (1M amber, 10M green)
+// so the scale jump reads at a glance: tinted value, border, and wash.
+export function Stat({
+  value,
+  label,
+  tone,
+}: {
+  value: ReactNode;
+  label: ReactNode;
+  tone?: "amber" | "green";
+}) {
+  const styles =
+    tone === "amber"
+      ? { box: "border-amber/50 bg-amber/10", val: "text-amber" }
+      : tone === "green"
+        ? { box: "border-green/50 bg-green/10", val: "text-green" }
+        : { box: "border-border bg-panel", val: "text-accent" };
   return (
-    <div className="rounded-lg border border-border bg-panel px-4 py-3">
-      <div className="font-mono text-2xl text-accent tabular-nums">{value}</div>
+    <div className={`rounded-lg border px-4 py-3 ${styles.box}`}>
+      <div className={`font-mono text-2xl tabular-nums ${styles.val}`}>{value}</div>
       <div className="mt-1 text-xs text-dim">{label}</div>
     </div>
   );
