@@ -1,0 +1,32 @@
+{
+  "experiment": "070-matryoshka-bits-cascade-negative",
+  "date": "2026-07-02",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5, 16 vCPU) on-demand, ap-northeast-1",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067-069)",
+  "question": "Does a Matryoshka-over-bits cascade (w-word packed sketch scan -> top-C1 -> 256-bit Hamming on survivors -> top-C2 -> f32 rerank) beat the flat 2-tier funnel at recall parity? Tier A uses two-pass histogram selection (no per-doc dists buffer), tile=8, same rotation x2 + residual codes.",
+  "baseline_2tier": {"c": 2000, "tile": 8, "recall": 0.9737, "qps": 847, "kernel": "069 fixed-width"},
+  "cascade_sweeps": {
+    "sketch_64bit": [
+      {"c1": 25000,  "recall": 0.7183, "qps": 1658},
+      {"c1": 50000,  "recall": 0.7887, "qps": 1558},
+      {"c1": 100000, "recall": 0.8488, "qps": 1341},
+      {"c1": 200000, "recall": 0.8989, "qps": 1093},
+      {"c1": 400000, "recall": 0.9335, "qps": 801}
+    ],
+    "sketch_128bit": [
+      {"c1": 25000,  "recall": 0.9500, "qps": 500},
+      {"c1": 50000,  "recall": 0.9627, "qps": 487},
+      {"c1": 100000, "recall": 0.9691, "qps": 473},
+      {"c1": 200000, "recall": 0.9722, "qps": 447}
+    ],
+    "sketch_192bit": [
+      {"c1": 10000, "recall": 0.9695, "qps": 377},
+      {"c1": 25000, "recall": 0.9729, "qps": 369},
+      {"c1": 50000, "recall": 0.9736, "qps": 364}
+    ]
+  },
+  "sift_1m_control": {"note": "cascade also dominated on SIFT1M/128-d: c1=50000 -> 0.8318 @ 1844 vs funnel 0.8334 @ 1572 (only ~parity at 5% corpus C1)"},
+  "verdict": "NEGATIVE at recall parity: every cascade point is Pareto-dominated by the flat funnel (which reaches 0.9737 @ 847 and 0.922 @ 902). The 64-bit sketch is statistically too weak at N=10M (Hamming concentrates at 32 +/- 4; true neighbors are not reliably in the top 0.25-4% by sketch distance). Wider sketches fix recall but pay back the byte saving: two-pass histogram selection reads the sketch twice, so a w-word sketch costs 2w/4 of the full scan's stream - at w=2 that is byte-identical to the flat 256-bit scan and adds C1 random gathers on top.",
+  "when_it_could_win": "Only if tier A were single-pass (needs a selection that keeps ids without knowing the threshold: bigger-than-C1 loose heap, or sampled threshold estimation) AND the sketch were 64-bit AND target recall <= ~0.93. A niche not worth engine complexity; parked."
+}
