@@ -254,13 +254,17 @@ pub fn hamming4(a: &[u64; 4], b: &[u64; 4]) -> u32 {
 
 #[inline]
 pub fn hamming(a: &[u64], b: &[u64]) -> u32 {
-    // fixed256 build: the width is a compile-time promise (constructors assert it),
-    // so dispatch straight to the typed kernel. The try_from length checks fold to
-    // a single predicted cmp; any non-256-bit code panics loudly — never a wrong answer.
+    // fixed256 build: 256-bit codes are a build-time commitment — QuantBinary is
+    // only ever constructed with words=4 under this feature, so the slice length
+    // is an invariant of the data structure, not something to re-prove per call
+    // (the 071 objdump showed try_from's check surviving in the 80M-iteration
+    // j-loop). SAFETY: rows of QuantBinary with words=4 are exactly 4 u64s;
+    // debug builds still verify.
     #[cfg(feature = "fixed256")]
     {
-        let a4 = <&[u64; 4]>::try_from(a).expect("fixed256 build: codes must be 256-bit");
-        let b4 = <&[u64; 4]>::try_from(b).expect("fixed256 build: codes must be 256-bit");
+        debug_assert!(a.len() == 4 && b.len() == 4, "fixed256 build: codes must be 256-bit");
+        let a4 = unsafe { &*(a.as_ptr() as *const [u64; 4]) };
+        let b4 = unsafe { &*(b.as_ptr() as *const [u64; 4]) };
         hamming4(a4, b4)
     }
     #[cfg(not(feature = "fixed256"))]

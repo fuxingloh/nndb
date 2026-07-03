@@ -1,0 +1,17 @@
+{
+  "experiment": "072-unsafe-width-cast",
+  "date": "2026-07-03",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) on-demand, ap-northeast-1",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067-071)",
+  "change": "fixed256 hamming(): try_from length checks -> debug_assert + unsafe pointer cast to &[u64;4]. The width is the build's contract (fixed256 = 256-bit codes, user-guaranteed); re-proving it per call cost real dispatch slots even after 071 (the check sat inside the 80M-iteration j-loop).",
+  "funnel_10m_batch8": [
+    {"build": "071 try_from",  "rerank": 500,  "qps": 1028, "recall_at_k": 0.9220},
+    {"build": "071 try_from",  "rerank": 2000, "qps": 955,  "recall_at_k": 0.9737},
+    {"build": "072 unsafe cast", "rerank": 500,  "qps": 1198, "p50_ms": 11.84, "recall_at_k": 0.9220},
+    {"build": "072 unsafe cast", "rerank": 2000, "qps": 1093, "p50_ms": 12.98, "recall_at_k": 0.9737}
+  ],
+  "gain": "+17% QPS over 071 at identical recall; C=2000 crosses 1000 QPS at 10M on 16 vCPU. CV <= 0.9%.",
+  "negative_control": "A bundled variant (stack acc array + per-tile query pre-conversion + cfg-split loop) measured 927/887 — SLOWER than 071 despite removing the same checks: the raw-pointer &[u64;4] array and split loop broke LLVM's aliasing/unroll analysis. Only the minimal in-kernel cast wins; the lesson of 012/071 (give the compiler its structure) still binds everywhere outside the cast.",
+  "kernel_arc_c2000": {"067": 650, "069_unroll": 847, "071_typed": 955, "072_unsafe": 1093, "note": "+68% cumulative from kernel-only changes, recall bit-identical throughout"}
+}
