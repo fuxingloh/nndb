@@ -1,0 +1,22 @@
+{
+  "experiment": "067-10m-matryoshka-funnel-dram-wall",
+  "date": "2026-07-02",
+  "commit": "30ad4c5",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) spot, us-east-2",
+  "dataset": "Snowflake arctic-embed-m-v1.5 (MSMARCO v2.1, precomputed, 10M of 71M), Matryoshka-truncated 768->256 then L2-normalized",
+  "n_base": 10000000,
+  "n_queries": 10000,
+  "dim": 256,
+  "k": 10,
+  "config": "1-bit binary funnel (sign bit, rotation x2 + residual, tile=8) + exact f32 rerank",
+  "chosen_operating_point": {"rerank": 4000, "recall_at_k": 0.9861, "qps": 617.8, "p50_ms": 20.032, "p99_ms": 22.010},
+  "note": "Same box family/size as 065 (1M OpenAI-256), so QPS IS directly comparable across the two entries. Codes = 320 MB >> LLC, but the scan stays COMPUTE-bound (see 068: marginal ns/code flat 16MB->320MB, tiling gains nothing); the QPS drop vs 1M is linear compute scaling, not a bandwidth wall.",
+  "rerank_sweep": [
+    {"rerank": 500,  "recall_at_k": 0.9220, "qps": 682.5, "p50_ms": 17.543, "p95_ms": 17.670, "p99_ms": 18.449},
+    {"rerank": 1000, "recall_at_k": 0.9536, "qps": 675.8, "p50_ms": 17.839, "p95_ms": 17.978, "p99_ms": 19.614},
+    {"rerank": 2000, "recall_at_k": 0.9737, "qps": 649.6, "p50_ms": 18.716, "p95_ms": 19.627, "p99_ms": 19.676},
+    {"rerank": 4000, "recall_at_k": 0.9861, "qps": 617.8, "p50_ms": 20.032, "p95_ms": 20.379, "p99_ms": 22.010},
+    {"rerank": 8000, "recall_at_k": 0.9932, "qps": 547.9, "p50_ms": 23.012, "p95_ms": 23.467, "p99_ms": 24.298}
+  ],
+  "memory_bytes": {"index": 320000000, "peak_rss": 20820406272}
+}
