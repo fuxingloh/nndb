@@ -15,6 +15,7 @@ import { ServingLab } from "@/components/labs/serving-lab";
 import { HardwareLab } from "@/components/labs/hardware-lab";
 import { ScalingLab } from "@/components/labs/scaling-lab";
 import { MatryoshkaLab } from "@/components/labs/matryoshka-lab";
+import { KernelArcLab } from "@/components/labs/kernel-arc-lab";
 
 <PageHeader eyebrow="In-memory vector search · QPS · latency · recall" title={<>Pushing vector search<br />QPS &amp; latency to the ceiling</>}>
 A first-principles study of **how many top-k vector queries per second a single CPU box can really do** over modern embeddings — and what actually moves that number.
@@ -22,7 +23,7 @@ A first-principles study of **how many top-k vector queries per second a single 
 It works through the techniques behind state-of-the-art vector search — binary quantization, learned rotations, product quantization, SIMD scan kernels, Matryoshka embeddings — building up from a brute-force baseline, measured the [ANN-Benchmarks](http://ann-benchmarks.com/) way (recall / QPS / latency), keeping only what the data justified. **Seventy-four numbered experiments** later, this is the engine that came out best and the lessons that got there. The full experiment log is at [/notes](/notes).
 </PageHeader>
 
-The headline numbers — **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 box**:
+The study ran in two eras, and the headline is the pair. **Where it started — Cohere v3, 1M × 1024-dim, one 8-core EC2 box** (the embedding you get; make the engine fast):
 
 <div className="my-6 grid grid-cols-3 gap-3">
   <Stat value="0.995" label="recall@10" />
@@ -30,7 +31,15 @@ The headline numbers — **Cohere v3 embeddings, 1M × 1024-dim, one 8-core EC2 
   <Stat value="8 ms" label="p50 latency" />
 </div>
 
-~100× the throughput of the brute-force baseline, same recall, 128 MB of index. The same engine goes further on other silicon, other embeddings, and other corpus sizes: **~2,310 QPS** on 8-core AMD Zen5 ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)), **0.991 recall @ ~5,000 QPS** on 256-bit Matryoshka codes at 1M ([065](/notes/065-matryoshka-256-openai-funnel)), and — the final arc — **10 million vectors at 0.974 recall, ~1,470 QPS, p50 12 ms on 16 vCPU** ([067](/notes/067-10m-matryoshka-funnel-dram-wall)–[074](/notes/074-wide-store)), after a kernel-autopsy series took the scan to its dispatch-width floor at **2.26× held-recall throughput** ([/alu/072](/alu/072), [/alu/073](/alu/073)).
+**Where it ended — Matryoshka-trained embeddings, 10M × 256-bit codes, one 16-vCPU box** (the embedding as part of the index design; then take the kernel to its floor):
+
+<div className="my-6 grid grid-cols-3 gap-3">
+  <Stat value="0.974" label="recall@10" />
+  <Stat value="~1,470" label="QPS" />
+  <Stat value="12 ms" label="p50 latency" />
+</div>
+
+The first row is ~100× the brute-force baseline at the same recall, in 128 MB. The second is **10× the corpus** of the first at comparable throughput — bought by moving to MRL-trained embeddings that survive truncation to 256 bits ([065](/notes/065-matryoshka-256-openai-funnel), [067](/notes/067-10m-matryoshka-funnel-dram-wall)), then a kernel-autopsy series that took the scan to its dispatch-width floor for **2.26× at held recall** ([067–074](/notes/067-10m-matryoshka-funnel-dram-wall), [/alu/072](/alu/072), [/alu/073](/alu/073)). The same engine spans other silicon too: **~2,310 QPS** on 8-core Zen5 at 1M ([062](/notes/062-hardware-cost-rightsizing)), **~19,900 QPS** on a full 192-core socket before the memory bus saturates ([064](/notes/064-c8a-scaling-bandwidth-roofline)).
 
 <Card n="01" title="how we got here — QPS at held recall">
   <JourneyLab />
@@ -198,18 +207,13 @@ The bandwidth wall (064) said: past the knee, throughput = bus ÷ bytes-per-quer
 
 ## The last arc: 10 million vectors, and a kernel taken to the floor
 
-The finale scaled the corpus 10× — **10M of Snowflake's 71M precomputed arctic-embed vectors** (MRL-256, like OpenAI's) — and then, when the scan turned out *compute*-bound even at 320 MB of codes, spent five experiments taking the kernel apart instruction by instruction. Each step: disassemble the binary, find where dispatch slots go, remove one thing, measure, repeat. The interactive autopsies are at [/alu/072](/alu/072) and [/alu/073](/alu/073); the arc, at held recall 0.974 and bit-identical results throughout:
+The finale scaled the corpus 10× — **10M of Snowflake's 71M precomputed arctic-embed vectors** (MRL-256, like OpenAI's) — and then, when the scan turned out *compute*-bound even at 320 MB of codes, spent five experiments taking the kernel apart instruction by instruction. Each step: disassemble the binary, find where dispatch slots go, remove one thing, measure, repeat. The interactive autopsies are at [/alu/072](/alu/072) and [/alu/073](/alu/073).
 
-| step | change | QPS (C=2000) |
-|---|---|---|
-| [067](/notes/067-10m-matryoshka-funnel-dram-wall) | baseline at 10M | 650 |
-| [069](/notes/069-fixed-width-256-kernel) | fixed-width unroll (012's verdict was width-scoped) | 847 |
-| [071](/notes/071-typed-kernel-bounds-check-tax) | prove the bounds checks away (types, not `unsafe`) | 955 |
-| [072](/notes/072-unsafe-width-cast) | unsafe width cast → LLVM re-vectorizes the whole tile loop | 1,093 |
-| [073](/notes/073-word-planar-query-groups) | word-planar query transpose — gathers and pointer surgery die | 1,307 |
-| [074](/notes/074-wide-store) | wide store — the last lane extraction dies | **1,471** |
+<Card n="12" title="the kernel arc — 650 → 1,471 QPS at held recall, step by step">
+  <KernelArcLab />
+</Card>
 
-**2.26× from kernel work alone, recall untouched** — after the project had twice concluded the kernel was done (012, 050; both verdicts were regime-scoped). Alongside: Matryoshka-256 recall *holds* at 10× corpus (no collapse — the shortlist just needs widening with N), a bits-cascade tier was tried and Pareto-dominated ([070](/notes/070-matryoshka-bits-cascade-negative)), and every micro-opt was gated by objdump plus a same-session negative control — two of which (a bundled refactor, a hand-hoisted broadcast) *failed* and are recorded as such.
+**2.26× from kernel work alone, recall untouched** — after the project had twice concluded the kernel was done (012, 050; both verdicts were regime-scoped). Alongside: Matryoshka-256 recall *holds* at 10× corpus (no collapse — the shortlist just needs widening with N), and a bits-cascade tier was tried and Pareto-dominated ([070](/notes/070-matryoshka-bits-cascade-negative)).
 
 The final operating points at 10M on 16 vCPU: **0.922 @ 1,685 QPS · 0.974 @ 1,471 QPS · 0.993 @ 925 QPS**, p50 11–17 ms. The loop that remains is ~20 uops per doc-group — data movement that must happen, math that must happen, one store — with the per-core streaming ceiling now in sight. The uop mine is exhausted; what's left lives in bytes and locality.
 
