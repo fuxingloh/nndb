@@ -36,8 +36,8 @@ const K073: Seg[] = [
   },
 ];
 
-// 074 (predicted): one vpmovqd narrows the 8 qword counts to 8 dwords; one vmovdqu
-// stores all of acc[0..8]. Tail handled outside the loop.
+// 074 (measured): one vpmovqd narrows the 8 qword counts to 8 dwords; one wide
+// store writes all of acc[0..8]. Tail bound moved outside the loop.
 const K074: Seg[] = [
   { key: "bcast", name: "4× vpbroadcastq — doc words to lanes", uops: 4, kind: "work", note: "Unchanged." },
   {
@@ -52,7 +52,7 @@ const K074: Seg[] = [
     name: "vpmovqd + vmovdqu — one wide store",
     uops: 2,
     kind: "work",
-    note: "_mm512_cvtepi64_epi32 narrows the 8 qword counts to 8 dwords; one 32 B store writes the whole group's acc. The 8 extract/store pairs and 8 tail-guards collapse to 2 uops; tail bounds move outside the loop.",
+    note: "Shipped as _mm512_cvtepi64_epi32 + _mm256_storeu_si256, with acc padded to whole groups of 8 so the tail bound moved out of the loop. objdump confirms vpmovqd in the loop and the extraction chain gone — the 8 extract/store pairs and 8 tail-guards collapsed to 2 uops.",
   },
   { key: "loop", name: "loop control", uops: 3, kind: "book", note: "Unchanged." },
 ];
@@ -85,7 +85,7 @@ export function Alu073Ledger() {
                 : "border-border text-dim hover:text-body"
             }`}
           >
-            {m === "073" ? "073 — as shipped (measured)" : "074 — wide store (predicted)"}
+            {m === "073" ? "073 — as shipped (measured)" : "074 — wide store (measured)"}
           </button>
         ))}
         <span className="ml-auto text-dim">
@@ -170,8 +170,9 @@ const ARC = [
   { v: "071", label: "typed + both-length gate", qps: 955 },
   { v: "072", label: "unsafe cast → LLVM re-vectorizes", qps: 1093 },
   { v: "073", label: "word-planar groups (T=32)", qps: 1307 },
+  { v: "074", label: "wide store (vpmovqd)", qps: 1471 },
 ];
-const ARC_MAX = 1500;
+const ARC_MAX = 1700;
 
 export function KernelArc() {
   return (
@@ -199,7 +200,7 @@ export function KernelArc() {
         </div>
       ))}
       <p className="pt-1 text-[13px] leading-6 text-dim">
-        C=2000, recall 0.9737 — bit-identical at every step. 2.0× from kernel work alone;
+        C=2000, recall 0.9737 — bit-identical at every step. 2.26× from kernel work alone;
         recall never moved. Each step was one change, one measurement, one objdump.
       </p>
     </div>

@@ -6,7 +6,7 @@ import { Alu073Asm, Alu073Ledger, KernelArc } from "@/components/labs/alu073-lab
 export const metadata: Metadata = {
   title: "073 · The ALU ledger — the waste is dead; one tax remains",
   description:
-    "The 073 word-planar kernel, disassembled: gathers and pointer surgery gone, the math near-minimal, and the store-out as the last answer-format tax.",
+    "The 073 word-planar kernel, disassembled: gathers and pointer surgery gone, the math near-minimal, and the store-out tax paid off in 074 — measured at 1471 QPS.",
 };
 
 export default function Alu073() {
@@ -31,8 +31,8 @@ export default function Alu073() {
       </header>
 
       <div className="mb-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat value="1307" label="QPS @ 10M, C=2000, recall 0.974 (batch=32)" />
-        <Stat value="1542" label="QPS @ C=500, recall 0.922" />
+        <Stat value="1471" label="QPS @ 10M, C=2000, recall 0.974 (074, batch=32)" />
+        <Stat value="1685" label="QPS @ C=500, recall 0.922" />
         <Stat value="0" label="vpgatherqq in the funnel (was 4/doc)" />
         <Stat value="T=32" label="new tiling optimum (was 8) — √(s/k) as predicted" />
       </div>
@@ -58,9 +58,10 @@ export default function Alu073() {
           <span className="text-text">
             the cost was never the arithmetic — it&apos;s the format the next consumer demands.
           </span>{" "}
-          074 is the two-instruction fix: <code className="font-mono text-[13px]">vpmovqd</code>{" "}
-          narrows the lanes, one <code className="font-mono text-[13px]">vmovdqu</code> writes
-          the group. Toggle the ledger to see the predicted shape.
+          074 shipped the two-instruction fix: <code className="font-mono text-[13px]">vpmovqd</code>{" "}
+          narrows the lanes, one wide store writes the group — and the measurement confirmed the
+          prediction: +13% (1307 → 1471 QPS at C=2000), with C=500 reaching 1685 QPS. Toggle
+          the ledger to see the measured shape.
         </p>
       </section>
 
@@ -96,8 +97,9 @@ export default function Alu073() {
       <section className="space-y-4 text-[15px] leading-7 text-body">
         <p className="text-dim">
           QPS measured on c8a.4xlarge (Zen5, 16 vCPU), 10M Snowflake arctic-256, exact ground
-          truth, 3 reps (CV ≤ 3.5%). Uop counts read from the disassembly; the 074 column is a
-          prediction — the experiment exists to falsify it.
+          truth, 3 reps (CV ≤ 3.5%). Uop counts read from the disassembly; the 074 column
+          started as a prediction — the experiment existed to falsify it, and the measurement
+          confirmed it instead at 1471 QPS (C=2000) and 1685 QPS (C=500).
         </p>
       </section>
 

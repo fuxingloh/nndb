@@ -347,7 +347,12 @@ pub fn knn_binary_funnel_tiled(
             let qrows: Vec<&[u64]> = (0..t).map(|j| bqueries.row(q0 + j)).collect();
             let mut heaps: Vec<BinaryHeap<(u32, u32)>> =
                 (0..t).map(|_| BinaryHeap::with_capacity(want + 1)).collect();
-            let mut acc = vec![0u32; t];
+            // acc padded to whole groups of 8: the planar kernel writes each group
+            // with ONE 32 B store (vpmovqd+vmovdqu). 073's per-lane bound check
+            // compiled to 8 extract/store pairs + 8 tail-guards per doc (~24 uops —
+            // the store-out tax, /alu/073); padding moves the tail bound out of the
+            // hot loop entirely. Selection still reads only acc[..t].
+            let mut acc = vec![0u32; t.div_ceil(8) * 8];
 
             // 073 (fixed256): word-planar query groups. The 072 objdump showed the
             // vectorized j-loop spending ~73% of its dispatch budget re-establishing
@@ -389,40 +394,42 @@ pub fn knn_binary_funnel_tiled(
                 {
                     // SAFETY: fixed256 invariant — doc row is exactly 4 u64s.
                     let d = unsafe { &*(doc.as_ptr() as *const [u64; 4]) };
+                    // The planar kernel must be written as intrinsics: LLVM's
+                    // autovectorizer refuses this reduction shape from scalar
+                    // code (measured: it emits 32 scalar popcnt/doc — slower
+                    // than the 072 gather form it builds by itself).
                     for (g, qw) in qw_groups.iter().enumerate() {
-                        // The planar kernel must be written as intrinsics: LLVM's
-                        // autovectorizer refuses this reduction shape from scalar
-                        // code (measured: it emits 32 scalar popcnt/doc — slower
-                        // than the 072 gather form it builds by itself).
                         #[cfg(all(target_arch = "x86_64", target_feature = "avx512vpopcntdq"))]
-                        let lanes: [u64; 8] = unsafe {
+                        unsafe {
                             use std::arch::x86_64::*;
                             let mut accv = _mm512_setzero_si512();
                             // 4× (broadcast doc word ^ 8 query words → popcount → add):
-                            // the qw rows are loop-invariant stack loads LLVM hoists.
+                            // the qw rows are loop-invariant folded loads. LLVM
+                            // re-broadcasts the doc words per unrolled group; hand-
+                            // hoisting them into named zmms measured SLIGHTLY WORSE
+                            // (1622 vs 1685 @ C=500) — the re-broadcasts ride free on
+                            // load-pipe slack and the hoist perturbs the schedule.
                             for w in 0..4 {
                                 let dv = _mm512_set1_epi64(d[w] as i64);
                                 let qv = _mm512_loadu_si512(qw[w].as_ptr() as *const _);
                                 accv = _mm512_add_epi64(accv, _mm512_popcnt_epi64(_mm512_xor_si512(dv, qv)));
                             }
-                            let mut out = [0u64; 8];
-                            _mm512_storeu_si512(out.as_mut_ptr() as *mut _, accv);
-                            out
-                        };
+                            // 074: narrow 8 qword counts → 8 dwords, ONE 32 B store.
+                            // acc is padded to whole groups, so no tail bound here —
+                            // this replaces 073's 8 extract/store pairs + 8 guards.
+                            let lanes32 = _mm512_cvtepi64_epi32(accv);
+                            _mm256_storeu_si256(acc.as_mut_ptr().add(g * 8) as *mut _, lanes32);
+                        }
                         #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512vpopcntdq")))]
-                        let lanes: [u64; 8] = {
-                            let mut lanes = [0u64; 8];
-                            for w in 0..4 {
-                                let dw = d[w];
-                                for j in 0..8 {
-                                    lanes[j] += (dw ^ qw[w][j]).count_ones() as u64;
+                        {
+                            let base_j = g * 8;
+                            for j in 0..8 {
+                                let mut lane = 0u32;
+                                for w in 0..4 {
+                                    lane += (d[w] ^ qw[w][j]).count_ones();
                                 }
+                                acc[base_j + j] = lane;
                             }
-                            lanes
-                        };
-                        let base_j = g * 8;
-                        for j in base_j..(base_j + 8).min(t) {
-                            acc[j] = lanes[j - base_j] as u32;
                         }
                     }
                 }

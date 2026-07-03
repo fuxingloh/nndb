@@ -1,0 +1,22 @@
+{
+  "experiment": "074-wide-store",
+  "date": "2026-07-03",
+  "commit": "9908652",
+  "hardware": "c8a.4xlarge (AMD Zen5 EPYC 9R45, 16 vCPU) on-demand, ap-northeast-1",
+  "dataset": "Snowflake arctic-embed-m-v1.5 10M x 256-d (as 067-073)",
+  "change": "wide store-out: 073's planar kernel ended each doc-group with 8 complete distances in one zmm, then disassembled it lane-by-lane — 8 extract/store pairs (vmovd/vpextrd/vextracti128/vextracti32x4), each with its own cmp/je tail-guard, plus an acc-pointer reload between extractions (~24 uops/doc of store-out tax, see /alu/073). Fix: pad acc to whole groups of 8 (tail bound moves out of the hot loop; selection still reads only acc[..t]), then narrow+store in two instructions: _mm512_cvtepi64_epi32 (vpmovqd) + one 32 B _mm256_storeu_si256. Scalar fallback path simplified as well.",
+  "tile_resweep_c2000": [
+    {"batch": 16, "qps": 1401, "cv": 0.002},
+    {"batch": 32, "qps": 1498, "cv": 0.005},
+    {"batch": 48, "qps": 1379, "cv": 0.019},
+    {"batch": 64, "qps": 1367, "cv": 0.056}
+  ],
+  "final_operating_points_batch32": [
+    {"rerank": 500,  "recall_at_k": 0.9220, "qps": 1685, "cv": 0.000, "p50_ms": 11.26, "p99_ms": 11.42},
+    {"rerank": 2000, "recall_at_k": 0.9737, "qps": 1471, "cv": 0.009, "p50_ms": 12.37, "p99_ms": 12.70},
+    {"rerank": 8000, "recall_at_k": 0.9932, "qps": 925,  "cv": 0.001, "p50_ms": 16.80, "p99_ms": 17.93}
+  ],
+  "gain": "+13% over 073 at C=2000 (1307 -> 1471). Tile optimum stays 32. Final operating points: 3 reps, latency-queries=100, deltas measured same-box same-session vs 073.",
+  "kernel_arc_c2000": {"067": 650, "069_unroll": 847, "071_typed": 955, "072_unsafe": 1093, "073_planar_b32": 1307, "074_wide_store": 1471},
+  "note": "objdump confirms: vpmovqd present in the funnel region (6 sites incl. remainder paths); the per-lane extraction chain is gone from the group loop. Loop is now ~20 uops/doc: 4 broadcasts + 4 folded-load XORs + 4 popcounts + 3 adds + narrow + store + loop control — essentially irreducible at this ISA. Cumulative kernel-only arc: 2.26x, recall bit-identical throughout."
+}
